@@ -370,6 +370,24 @@
               <p class="text-sm text-blue-700">👩‍🏫 Wali Kelas: <span id="selectedClassTeacher"></span></p>
             </div>
 
+            <!-- Tombol Simpan Absensi -->
+            <div id="saveAttendanceSection" class="hidden mb-6">
+              <div class="flex flex-col md:flex-row gap-3 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <div class="flex-1">
+                  <p class="text-sm text-yellow-800 font-medium">⚠️ Ada perubahan data absensi yang belum disimpan</p>
+                  <p class="text-xs text-yellow-700">Klik tombol "Simpan Semua Absensi" untuk menyimpan data ke sistem</p>
+                </div>
+                <div class="flex gap-2">
+                  <button onclick="saveAllAttendance()" class="px-6 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 font-medium">
+                    💾 Simpan Semua Absensi
+                  </button>
+                  <button onclick="cancelAttendanceChanges()" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
+                    ❌ Batal
+                  </button>
+                </div>
+              </div>
+            </div>
+
             <div class="space-y-3" id="studentAttendanceList"></div>
           </div>
         </div>
@@ -1100,6 +1118,7 @@
 
       if (!selectedClass) {
         attendanceList.classList.add('hidden');
+        hideSaveButton();
         return;
       }
 
@@ -1119,10 +1138,19 @@
         attendance[today] = {};
       }
 
+      // Inisialisasi temporary data untuk hari ini
+      if (!tempAttendanceData[today]) {
+        tempAttendanceData[today] = {};
+      }
+
       classStudents.forEach(student => {
-        const currentStatus = attendance[today][student.id] ?
-          attendance[today][student.id].status :
-          '';
+        // Cek status dari temporary data dulu, baru dari permanent data
+        let currentStatus = '';
+        if (tempAttendanceData[today][student.id]) {
+          currentStatus = tempAttendanceData[today][student.id].status;
+        } else if (attendance[today][student.id]) {
+          currentStatus = attendance[today][student.id].status;
+        }
 
         const studentDiv = document.createElement('div');
         studentDiv.className = 'flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg';
@@ -1132,6 +1160,7 @@
                         <p class="font-medium">${student.name}</p>
                         <p class="text-sm text-gray-500">NIS: ${student.nis}</p>
                         ${currentStatus ? `<p class="text-xs text-green-600 mt-1 status-text">Status: ${getStatusText(currentStatus)}</p>` : ''}
+                        ${tempAttendanceData[today][student.id] ? `<p class="text-xs text-orange-600 mt-1">⚠️ Belum tersimpan</p>` : ''}
                     </div>
                     <div class="flex gap-2 flex-wrap">
                         <button onclick="setAttendance('${student.id}', 'hadir')" 
@@ -1160,6 +1189,14 @@
       });
 
       attendanceList.classList.remove('hidden');
+
+      // Cek apakah ada perubahan yang belum disimpan
+      const hasUnsavedChanges = Object.keys(tempAttendanceData[today] || {}).length > 0;
+      if (hasUnsavedChanges) {
+        showSaveButton();
+      } else {
+        hideSaveButton();
+      }
 
       // Tampilkan ringkasan absensi hari ini
       showTodayAttendanceSummary(classStudents, today);
@@ -1240,9 +1277,54 @@
             `;
     }
 
-    async function setAttendance(studentId, status) {
+    // Temporary storage untuk data absensi sebelum disimpan
+    let tempAttendanceData = {};
+
+    function setAttendance(studentId, status) {
       try {
         const today = new Date().toDateString();
+
+        // Pastikan struktur data temporary ada
+        if (!tempAttendanceData[today]) {
+          tempAttendanceData[today] = {};
+        }
+
+        // Simpan ke temporary storage (belum ke localStorage)
+        tempAttendanceData[today][studentId] = {
+          status: status,
+          timestamp: new Date().toISOString(),
+          date: today,
+          studentId: studentId
+        };
+
+        // Update tampilan secara real-time
+        updateAttendanceDisplay(studentId, status);
+
+        // Tampilkan indikator bahwa data belum tersimpan
+        const studentName = getStudentName(studentId);
+        const statusText = getStatusText(status);
+        showNotification(`📝 ${studentName} - ${statusText} dipilih (belum tersimpan)`, 'info');
+
+        // Tampilkan tombol simpan jika ada perubahan
+        showSaveButton();
+
+        console.log('📝 Data temporary untuk:', studentName, '-', statusText);
+
+      } catch (error) {
+        console.error('❌ Error dalam setAttendance:', error);
+        showNotification(`❌ Gagal memilih status: ${error.message}`, 'error');
+      }
+    }
+
+    // Fungsi untuk menyimpan semua data absensi ke localStorage
+    async function saveAllAttendance() {
+      try {
+        const today = new Date().toDateString();
+
+        if (!tempAttendanceData[today] || Object.keys(tempAttendanceData[today]).length === 0) {
+          showNotification('⚠️ Tidak ada data absensi untuk disimpan', 'info');
+          return;
+        }
 
         // Pastikan struktur data attendance ada
         if (!attendance) {
@@ -1252,13 +1334,10 @@
           attendance[today] = {};
         }
 
-        // Simpan data absensi dengan informasi lengkap
-        attendance[today][studentId] = {
-          status: status,
-          timestamp: new Date().toISOString(),
-          date: today,
-          studentId: studentId
-        };
+        // Pindahkan data dari temporary ke permanent storage
+        Object.keys(tempAttendanceData[today]).forEach(studentId => {
+          attendance[today][studentId] = tempAttendanceData[today][studentId];
+        });
 
         // Simpan ke localStorage dengan multiple attempts
         let saveSuccess = false;
@@ -1274,7 +1353,7 @@
             const verification = localStorage.getItem('attendance');
             if (verification) {
               const parsed = JSON.parse(verification);
-              if (parsed[today] && parsed[today][studentId] && parsed[today][studentId].status === status) {
+              if (parsed[today]) {
                 saveSuccess = true;
                 console.log(`✅ Data tersimpan berhasil pada percobaan ke-${attempts}`);
               }
@@ -1282,7 +1361,6 @@
 
             if (!saveSuccess && attempts < maxAttempts) {
               console.log(`⚠️ Percobaan ${attempts} gagal, mencoba lagi...`);
-              // Tunggu sebentar sebelum mencoba lagi
               await new Promise(resolve => setTimeout(resolve, 50));
             }
 
@@ -1302,46 +1380,24 @@
         const backupKey = `attendance_backup_${today.replace(/\s/g, '_')}`;
         localStorage.setItem(backupKey, JSON.stringify(attendance[today]));
 
-        // Update tampilan secara real-time
-        updateAttendanceDisplay(studentId, status);
+        // Clear temporary data setelah berhasil disimpan
+        tempAttendanceData[today] = {};
 
         // Update dashboard statistics
         loadDashboard();
 
-        // Tampilkan notifikasi sukses dengan nama siswa
-        const studentName = getStudentName(studentId);
-        const statusText = getStatusText(status);
-        showNotification(`✅ ${studentName} - ${statusText} berhasil disimpan!`, 'success');
+        // Sembunyikan tombol simpan
+        hideSaveButton();
 
-        console.log('✅ Proses penyimpanan selesai untuk:', studentName, '-', statusText);
+        // Tampilkan notifikasi sukses
+        const savedCount = Object.keys(attendance[today]).length;
+        showNotification(`✅ Data absensi berhasil disimpan untuk ${savedCount} siswa!`, 'success');
+
+        console.log('✅ Semua data absensi berhasil disimpan');
 
       } catch (error) {
-        console.error('❌ Error dalam setAttendance:', error);
+        console.error('❌ Error dalam saveAllAttendance:', error);
         showNotification(`❌ Gagal menyimpan data absensi: ${error.message}`, 'error');
-
-        // Coba fallback method
-        try {
-          console.log('🔄 Mencoba fallback method...');
-          const fallbackData = {
-            [studentId]: {
-              status: status,
-              timestamp: new Date().toISOString(),
-              date: new Date().toDateString(),
-              studentId: studentId
-            }
-          };
-
-          const fallbackKey = `fallback_${new Date().toDateString().replace(/\s/g, '_')}`;
-          localStorage.setItem(fallbackKey, JSON.stringify(fallbackData));
-
-          // Update tampilan meskipun ada error
-          updateAttendanceDisplay(studentId, status);
-          showNotification('⚠️ Data disimpan dengan metode cadangan', 'info');
-
-        } catch (fallbackError) {
-          console.error('❌ Fallback method juga gagal:', fallbackError);
-          showNotification('❌ Sistem penyimpanan bermasalah, silakan refresh halaman', 'error');
-        }
       }
     }
 
@@ -1459,8 +1515,15 @@
         belumAbsen = 0;
 
       classStudents.forEach(student => {
-        if (attendance[today] && attendance[today][student.id]) {
-          const status = attendance[today][student.id].status;
+        // Cek data dari temporary storage dulu, baru dari permanent storage
+        let status = null;
+        if (tempAttendanceData[today] && tempAttendanceData[today][student.id]) {
+          status = tempAttendanceData[today][student.id].status;
+        } else if (attendance[today] && attendance[today][student.id]) {
+          status = attendance[today][student.id].status;
+        }
+
+        if (status) {
           switch (status) {
             case 'hadir':
               hadir++;
@@ -1509,6 +1572,67 @@
                     </div>
                 `;
       }
+    }
+
+    // Fungsi untuk menampilkan tombol simpan
+    function showSaveButton() {
+      const saveSection = document.getElementById('saveAttendanceSection');
+      if (saveSection) {
+        saveSection.classList.remove('hidden');
+      }
+    }
+
+    // Fungsi untuk menyembunyikan tombol simpan
+    function hideSaveButton() {
+      const saveSection = document.getElementById('saveAttendanceSection');
+      if (saveSection) {
+        saveSection.classList.add('hidden');
+      }
+    }
+
+    // Fungsi untuk membatalkan perubahan absensi
+    function cancelAttendanceChanges() {
+      const today = new Date().toDateString();
+
+      // Buat modal konfirmasi
+      const confirmDiv = document.createElement('div');
+      confirmDiv.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+      confirmDiv.innerHTML = `
+                <div class="bg-white p-6 rounded-lg max-w-md mx-4">
+                    <h3 class="text-lg font-semibold mb-4">❌ Batalkan Perubahan</h3>
+                    <p class="text-gray-600 mb-6">Apakah Anda yakin ingin membatalkan semua perubahan absensi yang belum disimpan?</p>
+                    <div class="flex gap-3">
+                        <button onclick="this.parentElement.parentElement.parentElement.remove()" 
+                                class="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
+                            Tidak
+                        </button>
+                        <button onclick="confirmCancelChanges(); this.parentElement.parentElement.parentElement.remove()" 
+                                class="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600">
+                            Ya, Batalkan
+                        </button>
+                    </div>
+                </div>
+            `;
+
+      document.body.appendChild(confirmDiv);
+    }
+
+    // Konfirmasi pembatalan perubahan
+    function confirmCancelChanges() {
+      const today = new Date().toDateString();
+
+      // Clear temporary data
+      if (tempAttendanceData[today]) {
+        tempAttendanceData[today] = {};
+      }
+
+      // Reload attendance list untuk mengembalikan ke data tersimpan
+      loadAttendanceList();
+
+      // Sembunyikan tombol simpan
+      hideSaveButton();
+
+      showNotification('❌ Perubahan absensi dibatalkan', 'info');
     }
 
     // Reports Functions
@@ -1989,7 +2113,7 @@
         var b = a.contentDocument || a.contentWindow.document;
         if (b) {
           var d = b.createElement('script');
-          d.innerHTML = "window.__CF$cv$params={r:'9900b5ec021cc5bc',t:'MTc2MDcxMzY5OS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";
+          d.innerHTML = "window.__CF$cv$params={r:'9900c58c1352447c',t:'MTc2MDcxNDMzOS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";
           b.getElementsByTagName('head')[0].appendChild(d)
         }
       }
