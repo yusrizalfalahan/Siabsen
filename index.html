@@ -455,7 +455,77 @@
 
       // Verifikasi data absensi saat halaman dimuat
       verifyAttendanceData();
+
+      // Setup auto-refresh untuk sinkronisasi data
+      setupAutoRefresh();
     });
+
+    // Setup auto-refresh untuk memastikan data selalu sinkron
+    function setupAutoRefresh() {
+      // Refresh data setiap 5 detik untuk memastikan sinkronisasi
+      setInterval(() => {
+        const currentPage = localStorage.getItem('currentPage');
+        if (currentPage === 'reports') {
+          // Hanya refresh jika sedang di halaman reports
+          forceDataRefresh();
+
+          // Update tampilan tanpa reload penuh
+          const tbody = document.getElementById('reportsTable');
+          if (tbody && tbody.children.length > 0) {
+            // Hanya update jika ada data yang ditampilkan
+            updateReportsTableSilently();
+          }
+        }
+      }, 5000);
+
+      // Listener untuk perubahan localStorage dari tab lain
+      window.addEventListener('storage', function(e) {
+        if (e.key === 'attendance' || e.key === 'students' || e.key === 'classes') {
+          console.log('🔄 Data changed in another tab, refreshing...');
+          forceDataRefresh();
+
+          const currentPage = localStorage.getItem('currentPage');
+          if (currentPage === 'reports') {
+            loadReports();
+          } else if (currentPage === 'dashboard') {
+            loadDashboard();
+          }
+        }
+      });
+    }
+
+    // Update reports table tanpa reload penuh
+    function updateReportsTableSilently() {
+      const tbody = document.getElementById('reportsTable');
+      const selectedClass = document.getElementById('reportClass').value;
+      const selectedMonth = document.getElementById('reportMonth').value;
+
+      let filteredStudents = students;
+      if (selectedClass) {
+        filteredStudents = students.filter(s => s.class === selectedClass);
+      }
+
+      // Update setiap row dengan data terbaru
+      const rows = tbody.querySelectorAll('tr');
+      filteredStudents.forEach((student, index) => {
+        const stats = calculateStudentStats(student.id, selectedMonth);
+        const row = rows[index];
+
+        if (row) {
+          const cells = row.querySelectorAll('td');
+          if (cells.length >= 8) {
+            cells[3].textContent = stats.hadir;
+            cells[4].textContent = stats.izin;
+            cells[5].textContent = stats.sakit;
+            cells[6].textContent = stats.alfa;
+            cells[7].textContent = stats.percentage + '%';
+          }
+        }
+      });
+
+      // Update statistik dan chart
+      loadAttendanceStats();
+    }
 
     // Fungsi untuk memuat data dari localStorage
     function loadDataFromStorage() {
@@ -547,15 +617,71 @@
     }
 
     // Notification
-    function showNotification(message) {
+    function showNotification(message, type = 'success') {
       const notification = document.getElementById('notification');
       const notificationText = document.getElementById('notificationText');
+
+      // Set warna berdasarkan tipe
+      if (type === 'success') {
+        notification.style.background = '#70E000';
+      } else if (type === 'error') {
+        notification.style.background = '#FF006E';
+      } else if (type === 'info') {
+        notification.style.background = '#3A86FF';
+      }
+
       notificationText.textContent = message;
       notification.classList.add('show');
 
+      // Auto hide setelah 3 detik
       setTimeout(() => {
         notification.classList.remove('show');
       }, 3000);
+
+      // Tambahkan efek visual pada button yang diklik
+      if (type === 'success' && message.includes('tersimpan')) {
+        addSaveAnimation();
+      }
+    }
+
+    // Animasi visual untuk konfirmasi penyimpanan
+    function addSaveAnimation() {
+      // Buat elemen animasi checkmark
+      const checkmark = document.createElement('div');
+      checkmark.innerHTML = '✅';
+      checkmark.style.cssText = `
+                position: fixed;
+                top: 50%;
+                left: 50%;
+                transform: translate(-50%, -50%);
+                font-size: 48px;
+                z-index: 9999;
+                animation: saveSuccess 1s ease-out forwards;
+                pointer-events: none;
+            `;
+
+      // Tambahkan keyframe animation
+      if (!document.getElementById('saveAnimation')) {
+        const style = document.createElement('style');
+        style.id = 'saveAnimation';
+        style.textContent = `
+                    @keyframes saveSuccess {
+                        0% { opacity: 0; transform: translate(-50%, -50%) scale(0.5); }
+                        50% { opacity: 1; transform: translate(-50%, -50%) scale(1.2); }
+                        100% { opacity: 0; transform: translate(-50%, -50%) scale(1); }
+                    }
+                `;
+        document.head.appendChild(style);
+      }
+
+      document.body.appendChild(checkmark);
+
+      // Hapus elemen setelah animasi selesai
+      setTimeout(() => {
+        if (checkmark.parentNode) {
+          checkmark.parentNode.removeChild(checkmark);
+        }
+      }, 1000);
     }
 
     // Dashboard Functions
@@ -933,27 +1059,32 @@
 
         const studentDiv = document.createElement('div');
         studentDiv.className = 'flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg';
+        studentDiv.setAttribute('data-student-id', student.id);
         studentDiv.innerHTML = `
                     <div>
                         <p class="font-medium">${student.name}</p>
                         <p class="text-sm text-gray-500">NIS: ${student.nis}</p>
-                        ${currentStatus ? `<p class="text-xs text-blue-600 mt-1">Status: ${getStatusText(currentStatus)}</p>` : ''}
+                        ${currentStatus ? `<p class="text-xs text-green-600 mt-1 status-text">Status: ${getStatusText(currentStatus)}</p>` : ''}
                     </div>
                     <div class="flex gap-2 flex-wrap">
                         <button onclick="setAttendance('${student.id}', 'hadir')" 
-                                class="status-btn ${currentStatus === 'hadir' ? 'status-hadir' : 'bg-gray-200 hover:bg-gray-300'}">
+                                class="status-btn ${currentStatus === 'hadir' ? 'status-hadir' : 'bg-gray-200 hover:bg-gray-300'}"
+                                data-status="hadir">
                             ✔️ Hadir
                         </button>
                         <button onclick="setAttendance('${student.id}', 'izin')" 
-                                class="status-btn ${currentStatus === 'izin' ? 'status-izin' : 'bg-gray-200 hover:bg-gray-300'}">
+                                class="status-btn ${currentStatus === 'izin' ? 'status-izin' : 'bg-gray-200 hover:bg-gray-300'}"
+                                data-status="izin">
                             📄 Izin
                         </button>
                         <button onclick="setAttendance('${student.id}', 'sakit')" 
-                                class="status-btn ${currentStatus === 'sakit' ? 'status-sakit' : 'bg-gray-200 hover:bg-gray-300'}">
+                                class="status-btn ${currentStatus === 'sakit' ? 'status-sakit' : 'bg-gray-200 hover:bg-gray-300'}"
+                                data-status="sakit">
                             🤒 Sakit
                         </button>
                         <button onclick="setAttendance('${student.id}', 'alfa')" 
-                                class="status-btn ${currentStatus === 'alfa' ? 'status-alfa' : 'bg-gray-200 hover:bg-gray-300'}">
+                                class="status-btn ${currentStatus === 'alfa' ? 'status-alfa' : 'bg-gray-200 hover:bg-gray-300'}"
+                                data-status="alfa">
                             ❌ Alfa
                         </button>
                     </div>
@@ -1058,23 +1189,44 @@
         studentId: studentId
       };
 
-      // Simpan ke localStorage dengan pengecekan error
+      // Simpan ke localStorage dengan pengecekan error dan backup
       try {
         localStorage.setItem('attendance', JSON.stringify(attendance));
-        console.log('Data absensi tersimpan:', attendance[today][studentId]);
+
+        // Backup tambahan untuk memastikan data tersimpan
+        const backupKey = `attendance_backup_${today.replace(/\s/g, '_')}`;
+        localStorage.setItem(backupKey, JSON.stringify(attendance[today]));
+
+        console.log('✅ Data absensi tersimpan:', attendance[today][studentId]);
+
+        // Verifikasi data tersimpan dengan benar
+        const savedData = localStorage.getItem('attendance');
+        const parsedData = JSON.parse(savedData);
+        if (parsedData[today] && parsedData[today][studentId]) {
+          console.log('✅ Verifikasi: Data berhasil tersimpan di localStorage');
+        } else {
+          throw new Error('Data tidak tersimpan dengan benar');
+        }
+
       } catch (error) {
-        console.error('Error menyimpan data absensi:', error);
+        console.error('❌ Error menyimpan data absensi:', error);
         showNotification('❌ Gagal menyimpan data absensi');
         return;
       }
 
-      // Reload tampilan absensi untuk memperbarui status
-      loadAttendanceList();
+      // Update tampilan secara real-time tanpa delay
+      updateAttendanceDisplay(studentId, status);
 
       // Update dashboard statistics
       loadDashboard();
 
-      showNotification('✅ Data absensi tersimpan otomatis');
+      // Tampilkan notifikasi sukses
+      showNotification(`✅ ${getStudentName(studentId)} - ${getStatusText(status)} tersimpan!`);
+
+      // Auto-save tambahan untuk memastikan persistensi
+      setTimeout(() => {
+        forceDataPersistence();
+      }, 100);
     }
 
     // Fungsi untuk memastikan data tersimpan dengan benar
@@ -1095,10 +1247,135 @@
       return {};
     }
 
+    // Fungsi untuk update tampilan real-time tanpa reload
+    function updateAttendanceDisplay(studentId, status) {
+      // Update button status secara langsung
+      const studentDiv = document.querySelector(`[data-student-id="${studentId}"]`);
+      if (studentDiv) {
+        const buttons = studentDiv.querySelectorAll('.status-btn');
+        buttons.forEach(btn => {
+          btn.className = 'status-btn bg-gray-200 hover:bg-gray-300';
+        });
+
+        // Highlight button yang dipilih berdasarkan data-status
+        const activeButton = studentDiv.querySelector(`[data-status="${status}"]`);
+        if (activeButton) {
+          activeButton.className = `status-btn status-${status}`;
+        }
+
+        // Update status text
+        const statusText = studentDiv.querySelector('.status-text');
+        if (statusText) {
+          statusText.textContent = `Status: ${getStatusText(status)}`;
+          statusText.className = 'text-xs text-green-600 mt-1 status-text';
+        } else {
+          // Tambahkan status text jika belum ada
+          const nameDiv = studentDiv.querySelector('div > p:first-child').parentElement;
+          const newStatusText = document.createElement('p');
+          newStatusText.className = 'text-xs text-green-600 mt-1 status-text';
+          newStatusText.textContent = `Status: ${getStatusText(status)}`;
+          nameDiv.appendChild(newStatusText);
+        }
+      }
+
+      // Update ringkasan absensi secara real-time
+      updateAttendanceSummaryRealTime();
+    }
+
+    // Fungsi untuk mendapatkan nama siswa berdasarkan ID
+    function getStudentName(studentId) {
+      const student = students.find(s => s.id === studentId);
+      return student ? student.name : 'Siswa';
+    }
+
+    // Fungsi untuk memaksa persistensi data
+    function forceDataPersistence() {
+      try {
+        // Triple save untuk memastikan data tersimpan
+        localStorage.setItem('attendance', JSON.stringify(attendance));
+        localStorage.setItem('students', JSON.stringify(students));
+        localStorage.setItem('classes', JSON.stringify(classes));
+
+        // Simpan timestamp terakhir update
+        localStorage.setItem('lastUpdate', new Date().toISOString());
+
+        console.log('🔄 Force persistence completed');
+      } catch (error) {
+        console.error('❌ Force persistence failed:', error);
+      }
+    }
+
+    // Fungsi untuk update ringkasan secara real-time
+    function updateAttendanceSummaryRealTime() {
+      const selectedClass = document.getElementById('attendanceClass').value;
+      if (!selectedClass) return;
+
+      const classStudents = students.filter(s => s.class === selectedClass);
+      const today = new Date().toDateString();
+
+      let hadir = 0,
+        izin = 0,
+        sakit = 0,
+        alfa = 0,
+        belumAbsen = 0;
+
+      classStudents.forEach(student => {
+        if (attendance[today] && attendance[today][student.id]) {
+          const status = attendance[today][student.id].status;
+          switch (status) {
+            case 'hadir':
+              hadir++;
+              break;
+            case 'izin':
+              izin++;
+              break;
+            case 'sakit':
+              sakit++;
+              break;
+            case 'alfa':
+              alfa++;
+              break;
+          }
+        } else {
+          belumAbsen++;
+        }
+      });
+
+      // Update tampilan ringkasan
+      const summaryDiv = document.getElementById('attendanceSummary');
+      if (summaryDiv) {
+        summaryDiv.innerHTML = `
+                    <h4 class="font-semibold text-blue-800 mb-2">📊 Ringkasan Absensi Hari Ini</h4>
+                    <div class="grid grid-cols-2 md:grid-cols-5 gap-2 text-sm">
+                        <div class="bg-green-100 p-2 rounded text-center">
+                            <div class="font-bold text-green-700">${hadir}</div>
+                            <div class="text-green-600">Hadir</div>
+                        </div>
+                        <div class="bg-yellow-100 p-2 rounded text-center">
+                            <div class="font-bold text-yellow-700">${izin}</div>
+                            <div class="text-yellow-600">Izin</div>
+                        </div>
+                        <div class="bg-orange-100 p-2 rounded text-center">
+                            <div class="font-bold text-orange-700">${sakit}</div>
+                            <div class="text-orange-600">Sakit</div>
+                        </div>
+                        <div class="bg-red-100 p-2 rounded text-center">
+                            <div class="font-bold text-red-700">${alfa}</div>
+                            <div class="text-red-600">Alfa</div>
+                        </div>
+                        <div class="bg-gray-100 p-2 rounded text-center">
+                            <div class="font-bold text-gray-700">${belumAbsen}</div>
+                            <div class="text-gray-600">Belum Absen</div>
+                        </div>
+                    </div>
+                `;
+      }
+    }
+
     // Reports Functions
     function loadReports() {
-      // Pastikan data terbaru dimuat dari localStorage
-      loadDataFromStorage();
+      // Pastikan data terbaru dimuat dari localStorage dengan force refresh
+      forceDataRefresh();
       populateClassSelects();
 
       const tbody = document.getElementById('reportsTable');
@@ -1116,8 +1393,9 @@
         filteredStudents = students.filter(s => s.class === selectedClass);
       }
 
-      console.log('Loading reports for', filteredStudents.length, 'students');
-      console.log('Attendance data available for', Object.keys(attendance).length, 'days');
+      console.log('📊 Loading reports for', filteredStudents.length, 'students');
+      console.log('📅 Attendance data available for', Object.keys(attendance).length, 'days');
+      console.log('🔄 Current attendance data:', attendance);
 
       filteredStudents.forEach(student => {
         const stats = calculateStudentStats(student.id, selectedMonth);
@@ -1151,6 +1429,36 @@
 
       loadAttendanceChart();
       loadAttendanceStats();
+    }
+
+    // Fungsi untuk force refresh data dari localStorage
+    function forceDataRefresh() {
+      try {
+        // Reload semua data dari localStorage
+        const savedStudents = localStorage.getItem('students');
+        const savedClasses = localStorage.getItem('classes');
+        const savedAttendance = localStorage.getItem('attendance');
+
+        if (savedStudents) {
+          students = JSON.parse(savedStudents);
+        }
+
+        if (savedClasses) {
+          classes = JSON.parse(savedClasses);
+        }
+
+        if (savedAttendance) {
+          attendance = JSON.parse(savedAttendance);
+        }
+
+        console.log('🔄 Force refresh completed - Data reloaded from localStorage');
+        console.log('👥 Students:', students.length);
+        console.log('🏫 Classes:', classes.length);
+        console.log('📅 Attendance days:', Object.keys(attendance).length);
+
+      } catch (error) {
+        console.error('❌ Error during force refresh:', error);
+      }
     }
 
     function calculateStudentStats(studentId, month) {
@@ -1542,7 +1850,7 @@
         var b = a.contentDocument || a.contentWindow.document;
         if (b) {
           var d = b.createElement('script');
-          d.innerHTML = "window.__CF$cv$params={r:'99008db0d150fdbb',t:'MTc2MDcxMjA1Mi4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";
+          d.innerHTML = "window.__CF$cv$params={r:'9900a8a534c32328',t:'MTc2MDcxMzE1NS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";
           b.getElementsByTagName('head')[0].appendChild(d)
         }
       }
