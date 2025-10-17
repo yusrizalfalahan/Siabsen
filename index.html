@@ -346,14 +346,9 @@
         <div class="card p-6">
           <div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
             <h2 class="text-xl font-semibold mb-4 md:mb-0">🗓️ Absensi Harian</h2>
-            <div class="flex gap-2">
-              <button onclick="backupAttendanceData()" class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 text-sm">
-                💾 Backup Data
-              </button>
-              <button onclick="resetTodayAttendance()" class="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 text-sm">
-                🔄 Reset Hari Ini
-              </button>
-            </div>
+            <button onclick="saveAllAttendance()" class="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 font-medium">
+              💾 Simpan Data Absensi
+            </button>
           </div>
 
           <div class="mb-6">
@@ -383,6 +378,24 @@
                   </button>
                   <button onclick="cancelAttendanceChanges()" class="px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
                     ❌ Batal
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Tombol Simpan Permanen -->
+            <div id="permanentSaveSection" class="mb-6">
+              <div class="flex flex-col md:flex-row gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <div class="flex-1">
+                  <p class="text-sm text-blue-800 font-medium">💾 Simpan Data Absensi Permanen</p>
+                  <p class="text-xs text-blue-700">Simpan semua data absensi hari ini ke sistem secara permanen. Data yang tersimpan tidak dapat diubah lagi.</p>
+                </div>
+                <div class="flex gap-2">
+                  <button onclick="savePermanentAttendance()" class="px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 font-medium">
+                    🔒 Simpan Permanen
+                  </button>
+                  <button onclick="showAttendanceHistory()" class="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600">
+                    📋 Lihat Riwayat
                   </button>
                 </div>
               </div>
@@ -1566,6 +1579,336 @@
       }
     }
 
+    // Fungsi untuk menyimpan data absensi secara permanen
+    function savePermanentAttendance() {
+      try {
+        const today = new Date().toDateString();
+        const selectedClass = document.getElementById('attendanceClass').value;
+
+        if (!selectedClass) {
+          showNotification('⚠️ Pilih kelas terlebih dahulu', 'error');
+          return;
+        }
+
+        // Cek apakah ada data absensi untuk hari ini
+        if (!attendance[today] || Object.keys(attendance[today]).length === 0) {
+          showNotification('⚠️ Tidak ada data absensi untuk disimpan', 'error');
+          return;
+        }
+
+        // Hitung siswa yang sudah diabsen dari kelas yang dipilih
+        const classStudents = students.filter(s => s.class === selectedClass);
+        const attendedStudents = classStudents.filter(student =>
+          attendance[today][student.id]
+        );
+
+        if (attendedStudents.length === 0) {
+          showNotification('⚠️ Belum ada siswa yang diabsen di kelas ini', 'error');
+          return;
+        }
+
+        // Buat modal konfirmasi
+        const confirmDiv = document.createElement('div');
+        confirmDiv.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+        confirmDiv.innerHTML = `
+                    <div class="bg-white p-6 rounded-lg max-w-md mx-4">
+                        <h3 class="text-lg font-semibold mb-4">🔒 Konfirmasi Simpan Permanen</h3>
+                        <div class="mb-4">
+                            <p class="text-gray-600 mb-2">Data yang akan disimpan permanen:</p>
+                            <div class="bg-gray-50 p-3 rounded-lg text-sm">
+                                <p><strong>📅 Tanggal:</strong> ${new Date().toLocaleDateString('id-ID')}</p>
+                                <p><strong>🏫 Kelas:</strong> ${selectedClass}</p>
+                                <p><strong>👥 Siswa diabsen:</strong> ${attendedStudents.length} dari ${classStudents.length} siswa</p>
+                            </div>
+                        </div>
+                        <p class="text-red-600 text-sm mb-6">⚠️ <strong>Perhatian:</strong> Data yang disimpan permanen tidak dapat diubah atau dihapus lagi!</p>
+                        <div class="flex gap-3">
+                            <button onclick="this.parentElement.parentElement.parentElement.remove()" 
+                                    class="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
+                                Batal
+                            </button>
+                            <button onclick="confirmPermanentSave('${today}', '${selectedClass}'); this.parentElement.parentElement.parentElement.remove()" 
+                                    class="flex-1 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
+                                🔒 Ya, Simpan Permanen
+                            </button>
+                        </div>
+                    </div>
+                `;
+
+        document.body.appendChild(confirmDiv);
+
+      } catch (error) {
+        console.error('❌ Error in savePermanentAttendance:', error);
+        showNotification('❌ Gagal menyimpan data permanen', 'error');
+      }
+    }
+
+    // Konfirmasi penyimpanan permanen
+    function confirmPermanentSave(date, className) {
+      try {
+        // Inisialisasi permanent attendance storage
+        let permanentAttendance = JSON.parse(localStorage.getItem('permanentAttendance')) || {};
+
+        if (!permanentAttendance[date]) {
+          permanentAttendance[date] = {};
+        }
+
+        // Salin data absensi ke penyimpanan permanen
+        const classStudents = students.filter(s => s.class === className);
+        let savedCount = 0;
+
+        classStudents.forEach(student => {
+          if (attendance[date] && attendance[date][student.id]) {
+            permanentAttendance[date][student.id] = {
+              ...attendance[date][student.id],
+              savedPermanently: true,
+              permanentSaveTime: new Date().toISOString(),
+              className: className,
+              studentName: student.name,
+              studentNIS: student.nis
+            };
+            savedCount++;
+          }
+        });
+
+        // Simpan ke localStorage
+        localStorage.setItem('permanentAttendance', JSON.stringify(permanentAttendance));
+
+        // Buat log penyimpanan permanen
+        let saveLog = JSON.parse(localStorage.getItem('attendanceSaveLog')) || [];
+        saveLog.push({
+          date: date,
+          className: className,
+          studentsCount: savedCount,
+          saveTime: new Date().toISOString(),
+          savedBy: 'System'
+        });
+        localStorage.setItem('attendanceSaveLog', JSON.stringify(saveLog));
+
+        // Update status di UI
+        updatePermanentSaveStatus(date, className);
+
+        showNotification(`🔒 Data absensi ${className} berhasil disimpan permanen (${savedCount} siswa)`, 'success');
+
+        console.log(`✅ Permanent save completed: ${savedCount} students from ${className}`);
+
+      } catch (error) {
+        console.error('❌ Error in confirmPermanentSave:', error);
+        showNotification('❌ Gagal menyimpan data permanen', 'error');
+      }
+    }
+
+    // Update status penyimpanan permanen di UI
+    function updatePermanentSaveStatus(date, className) {
+      const today = new Date().toDateString();
+      if (date === today) {
+        // Tambahkan indikator bahwa data sudah disimpan permanen
+        const permanentSection = document.getElementById('permanentSaveSection');
+        if (permanentSection) {
+          permanentSection.innerHTML = `
+                        <div class="flex flex-col md:flex-row gap-3 p-4 bg-green-50 border border-green-200 rounded-lg">
+                            <div class="flex-1">
+                                <p class="text-sm text-green-800 font-medium">✅ Data Absensi Sudah Disimpan Permanen</p>
+                                <p class="text-xs text-green-700">Data absensi kelas ${className} untuk hari ini telah disimpan secara permanen pada ${new Date().toLocaleTimeString('id-ID')}</p>
+                            </div>
+                            <div class="flex gap-2">
+                                <button onclick="showAttendanceHistory()" class="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600">
+                                    📋 Lihat Riwayat
+                                </button>
+                                <button onclick="printAttendanceReport('${date}', '${className}')" class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
+                                    🖨️ Cetak Laporan
+                                </button>
+                            </div>
+                        </div>
+                    `;
+        }
+      }
+    }
+
+    // Fungsi untuk menampilkan riwayat absensi
+    function showAttendanceHistory() {
+      try {
+        const permanentAttendance = JSON.parse(localStorage.getItem('permanentAttendance')) || {};
+        const saveLog = JSON.parse(localStorage.getItem('attendanceSaveLog')) || [];
+
+        // Buat modal riwayat
+        const historyDiv = document.createElement('div');
+        historyDiv.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+
+        let historyContent = `
+                    <div class="bg-white rounded-lg max-w-4xl w-full max-h-[80vh] overflow-y-auto">
+                        <div class="p-6 border-b border-gray-200">
+                            <h3 class="text-xl font-semibold">📋 Riwayat Absensi Permanen</h3>
+                        </div>
+                        <div class="p-6">
+                `;
+
+        if (saveLog.length === 0) {
+          historyContent += `
+                        <div class="text-center py-8">
+                            <p class="text-gray-500">Belum ada data absensi yang disimpan permanen</p>
+                        </div>
+                    `;
+        } else {
+          historyContent += `
+                        <div class="overflow-x-auto">
+                            <table class="w-full border-collapse">
+                                <thead>
+                                    <tr class="border-b border-gray-200">
+                                        <th class="text-left p-3 font-semibold">Tanggal</th>
+                                        <th class="text-left p-3 font-semibold">Kelas</th>
+                                        <th class="text-left p-3 font-semibold">Jumlah Siswa</th>
+                                        <th class="text-left p-3 font-semibold">Waktu Simpan</th>
+                                        <th class="text-left p-3 font-semibold">Aksi</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                    `;
+
+          saveLog.reverse().forEach(log => {
+            const saveDate = new Date(log.saveTime).toLocaleDateString('id-ID');
+            const saveTime = new Date(log.saveTime).toLocaleTimeString('id-ID');
+
+            historyContent += `
+                            <tr class="border-b border-gray-100 hover:bg-gray-50">
+                                <td class="p-3">${new Date(log.date).toLocaleDateString('id-ID')}</td>
+                                <td class="p-3">${log.className}</td>
+                                <td class="p-3">${log.studentsCount} siswa</td>
+                                <td class="p-3">${saveDate} ${saveTime}</td>
+                                <td class="p-3">
+                                    <button onclick="printAttendanceReport('${log.date}', '${log.className}')" 
+                                            class="text-blue-600 hover:text-blue-800 mr-3">
+                                        🖨️ Cetak
+                                    </button>
+                                    <button onclick="viewDetailAttendance('${log.date}', '${log.className}')" 
+                                            class="text-green-600 hover:text-green-800">
+                                        👁️ Detail
+                                    </button>
+                                </td>
+                            </tr>
+                        `;
+          });
+
+          historyContent += `
+                                </tbody>
+                            </table>
+                        </div>
+                    `;
+        }
+
+        historyContent += `
+                        </div>
+                        <div class="p-6 border-t border-gray-200 flex justify-end">
+                            <button onclick="this.parentElement.parentElement.parentElement.remove()" 
+                                    class="px-6 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
+                                Tutup
+                            </button>
+                        </div>
+                    </div>
+                `;
+
+        historyDiv.innerHTML = historyContent;
+        document.body.appendChild(historyDiv);
+
+      } catch (error) {
+        console.error('❌ Error showing attendance history:', error);
+        showNotification('❌ Gagal menampilkan riwayat', 'error');
+      }
+    }
+
+    // Fungsi untuk mencetak laporan absensi
+    function printAttendanceReport(date, className) {
+      try {
+        const permanentAttendance = JSON.parse(localStorage.getItem('permanentAttendance')) || {};
+
+        if (!permanentAttendance[date]) {
+          showNotification('❌ Data tidak ditemukan', 'error');
+          return;
+        }
+
+        // Buat konten laporan
+        let reportContent = `
+                    <html>
+                    <head>
+                        <title>Laporan Absensi - ${className}</title>
+                        <style>
+                            body { font-family: Arial, sans-serif; margin: 20px; }
+                            .header { text-align: center; margin-bottom: 30px; }
+                            .info { margin-bottom: 20px; }
+                            table { width: 100%; border-collapse: collapse; }
+                            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                            th { background-color: #f2f2f2; }
+                            .status-hadir { color: green; font-weight: bold; }
+                            .status-izin { color: orange; font-weight: bold; }
+                            .status-sakit { color: blue; font-weight: bold; }
+                            .status-alfa { color: red; font-weight: bold; }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="header">
+                            <h2>LAPORAN ABSENSI SISWA</h2>
+                            <h3>Kelas ${className}</h3>
+                        </div>
+                        <div class="info">
+                            <p><strong>Tanggal:</strong> ${new Date(date).toLocaleDateString('id-ID')}</p>
+                            <p><strong>Waktu Cetak:</strong> ${new Date().toLocaleString('id-ID')}</p>
+                        </div>
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>No</th>
+                                    <th>Nama Siswa</th>
+                                    <th>NIS</th>
+                                    <th>Status Kehadiran</th>
+                                    <th>Waktu Absen</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                `;
+
+        let no = 1;
+        Object.values(permanentAttendance[date]).forEach(record => {
+          if (record.className === className) {
+            const statusClass = `status-${record.status}`;
+            const statusText = getStatusText(record.status);
+            const absenTime = new Date(record.timestamp).toLocaleTimeString('id-ID');
+
+            reportContent += `
+                            <tr>
+                                <td>${no++}</td>
+                                <td>${record.studentName}</td>
+                                <td>${record.studentNIS}</td>
+                                <td class="${statusClass}">${statusText}</td>
+                                <td>${absenTime}</td>
+                            </tr>
+                        `;
+          }
+        });
+
+        reportContent += `
+                            </tbody>
+                        </table>
+                        <div style="margin-top: 30px;">
+                            <p><em>Laporan ini dicetak secara otomatis dari Sistem Absensi Digital</em></p>
+                        </div>
+                    </body>
+                    </html>
+                `;
+
+        // Buka jendela baru untuk mencetak
+        const printWindow = window.open('', '_blank');
+        printWindow.document.write(reportContent);
+        printWindow.document.close();
+        printWindow.print();
+
+        showNotification('🖨️ Laporan siap dicetak', 'success');
+
+      } catch (error) {
+        console.error('❌ Error printing report:', error);
+        showNotification('❌ Gagal mencetak laporan', 'error');
+      }
+    }
+
     // Fungsi untuk update ringkasan secara real-time
     function updateAttendanceSummaryRealTime() {
       const selectedClass = document.getElementById('attendanceClass').value;
@@ -2179,7 +2522,7 @@
         var b = a.contentDocument || a.contentWindow.document;
         if (b) {
           var d = b.createElement('script');
-          d.innerHTML = "window.__CF$cv$params={r:'9900d0b0a0b14908',t:'MTc2MDcxNDc5NS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";
+          d.innerHTML = "window.__CF$cv$params={r:'9900de3016c85ff0',t:'MTc2MDcxNTM0OS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";
           b.getElementsByTagName('head')[0].appendChild(d)
         }
       }
