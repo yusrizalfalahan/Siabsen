@@ -530,31 +530,98 @@
     // Fungsi untuk memuat data dari localStorage
     function loadDataFromStorage() {
       try {
+        // Cek apakah localStorage tersedia
+        if (typeof(Storage) === "undefined") {
+          console.error('❌ Browser tidak mendukung localStorage');
+          showNotification('❌ Browser tidak mendukung penyimpanan data', 'error');
+          return;
+        }
+
         const savedStudents = localStorage.getItem('students');
         const savedClasses = localStorage.getItem('classes');
         const savedAttendance = localStorage.getItem('attendance');
 
-        if (savedStudents) {
-          students = JSON.parse(savedStudents);
-          console.log('Data siswa dimuat:', students.length, 'siswa');
+        // Load students data
+        if (savedStudents && savedStudents !== 'null' && savedStudents !== 'undefined') {
+          try {
+            const parsedStudents = JSON.parse(savedStudents);
+            if (Array.isArray(parsedStudents)) {
+              students = parsedStudents;
+              console.log('✅ Data siswa dimuat:', students.length, 'siswa');
+            } else {
+              console.warn('⚠️ Data siswa tidak valid, menggunakan array kosong');
+              students = [];
+            }
+          } catch (parseError) {
+            console.error('❌ Error parsing students data:', parseError);
+            students = [];
+          }
+        } else {
+          students = [];
         }
 
-        if (savedClasses) {
-          classes = JSON.parse(savedClasses);
-          console.log('Data kelas dimuat:', classes.length, 'kelas');
+        // Load classes data
+        if (savedClasses && savedClasses !== 'null' && savedClasses !== 'undefined') {
+          try {
+            const parsedClasses = JSON.parse(savedClasses);
+            if (Array.isArray(parsedClasses)) {
+              classes = parsedClasses;
+              console.log('✅ Data kelas dimuat:', classes.length, 'kelas');
+            } else {
+              console.warn('⚠️ Data kelas tidak valid, menggunakan array kosong');
+              classes = [];
+            }
+          } catch (parseError) {
+            console.error('❌ Error parsing classes data:', parseError);
+            classes = [];
+          }
+        } else {
+          classes = [];
         }
 
-        if (savedAttendance) {
-          attendance = JSON.parse(savedAttendance);
-          console.log('Data absensi dimuat:', Object.keys(attendance).length, 'hari');
+        // Load attendance data
+        if (savedAttendance && savedAttendance !== 'null' && savedAttendance !== 'undefined') {
+          try {
+            const parsedAttendance = JSON.parse(savedAttendance);
+            if (typeof parsedAttendance === 'object' && parsedAttendance !== null) {
+              attendance = parsedAttendance;
+              console.log('✅ Data absensi dimuat:', Object.keys(attendance).length, 'hari');
+            } else {
+              console.warn('⚠️ Data absensi tidak valid, menggunakan object kosong');
+              attendance = {};
+            }
+          } catch (parseError) {
+            console.error('❌ Error parsing attendance data:', parseError);
+            attendance = {};
+          }
+        } else {
+          attendance = {};
         }
+
+        // Simpan data yang sudah divalidasi kembali ke localStorage
+        localStorage.setItem('students', JSON.stringify(students));
+        localStorage.setItem('classes', JSON.stringify(classes));
+        localStorage.setItem('attendance', JSON.stringify(attendance));
+
+        console.log('✅ Semua data berhasil dimuat dan divalidasi');
 
       } catch (error) {
-        console.error('Error loading data from localStorage:', error);
+        console.error('❌ Error loading data from localStorage:', error);
         // Reset data jika terjadi error
         students = [];
         classes = [];
         attendance = {};
+
+        // Simpan data kosong yang valid
+        try {
+          localStorage.setItem('students', JSON.stringify(students));
+          localStorage.setItem('classes', JSON.stringify(classes));
+          localStorage.setItem('attendance', JSON.stringify(attendance));
+        } catch (saveError) {
+          console.error('❌ Error saving empty data:', saveError);
+        }
+
+        showNotification('⚠️ Data direset karena terjadi error', 'info');
       }
     }
 
@@ -1173,78 +1240,141 @@
             `;
     }
 
-    function setAttendance(studentId, status) {
-      const today = new Date().toDateString();
-
-      // Pastikan struktur data attendance ada
-      if (!attendance[today]) {
-        attendance[today] = {};
-      }
-
-      // Simpan data absensi dengan informasi lengkap
-      attendance[today][studentId] = {
-        status: status,
-        timestamp: new Date().toISOString(),
-        date: today,
-        studentId: studentId
-      };
-
-      // Simpan ke localStorage dengan pengecekan error dan backup
+    async function setAttendance(studentId, status) {
       try {
-        localStorage.setItem('attendance', JSON.stringify(attendance));
+        const today = new Date().toDateString();
 
-        // Backup tambahan untuk memastikan data tersimpan
+        // Pastikan struktur data attendance ada
+        if (!attendance) {
+          attendance = {};
+        }
+        if (!attendance[today]) {
+          attendance[today] = {};
+        }
+
+        // Simpan data absensi dengan informasi lengkap
+        attendance[today][studentId] = {
+          status: status,
+          timestamp: new Date().toISOString(),
+          date: today,
+          studentId: studentId
+        };
+
+        // Simpan ke localStorage dengan multiple attempts
+        let saveSuccess = false;
+        let attempts = 0;
+        const maxAttempts = 3;
+
+        while (!saveSuccess && attempts < maxAttempts) {
+          try {
+            attempts++;
+            localStorage.setItem('attendance', JSON.stringify(attendance));
+
+            // Verifikasi langsung setelah penyimpanan
+            const verification = localStorage.getItem('attendance');
+            if (verification) {
+              const parsed = JSON.parse(verification);
+              if (parsed[today] && parsed[today][studentId] && parsed[today][studentId].status === status) {
+                saveSuccess = true;
+                console.log(`✅ Data tersimpan berhasil pada percobaan ke-${attempts}`);
+              }
+            }
+
+            if (!saveSuccess && attempts < maxAttempts) {
+              console.log(`⚠️ Percobaan ${attempts} gagal, mencoba lagi...`);
+              // Tunggu sebentar sebelum mencoba lagi
+              await new Promise(resolve => setTimeout(resolve, 50));
+            }
+
+          } catch (saveError) {
+            console.error(`❌ Error pada percobaan ${attempts}:`, saveError);
+            if (attempts >= maxAttempts) {
+              throw saveError;
+            }
+          }
+        }
+
+        if (!saveSuccess) {
+          throw new Error('Gagal menyimpan setelah beberapa percobaan');
+        }
+
+        // Backup tambahan untuk keamanan
         const backupKey = `attendance_backup_${today.replace(/\s/g, '_')}`;
         localStorage.setItem(backupKey, JSON.stringify(attendance[today]));
 
-        console.log('✅ Data absensi tersimpan:', attendance[today][studentId]);
+        // Update tampilan secara real-time
+        updateAttendanceDisplay(studentId, status);
 
-        // Verifikasi data tersimpan dengan benar
-        const savedData = localStorage.getItem('attendance');
-        const parsedData = JSON.parse(savedData);
-        if (parsedData[today] && parsedData[today][studentId]) {
-          console.log('✅ Verifikasi: Data berhasil tersimpan di localStorage');
-        } else {
-          throw new Error('Data tidak tersimpan dengan benar');
-        }
+        // Update dashboard statistics
+        loadDashboard();
+
+        // Tampilkan notifikasi sukses dengan nama siswa
+        const studentName = getStudentName(studentId);
+        const statusText = getStatusText(status);
+        showNotification(`✅ ${studentName} - ${statusText} berhasil disimpan!`, 'success');
+
+        console.log('✅ Proses penyimpanan selesai untuk:', studentName, '-', statusText);
 
       } catch (error) {
-        console.error('❌ Error menyimpan data absensi:', error);
-        showNotification('❌ Gagal menyimpan data absensi');
-        return;
+        console.error('❌ Error dalam setAttendance:', error);
+        showNotification(`❌ Gagal menyimpan data absensi: ${error.message}`, 'error');
+
+        // Coba fallback method
+        try {
+          console.log('🔄 Mencoba fallback method...');
+          const fallbackData = {
+            [studentId]: {
+              status: status,
+              timestamp: new Date().toISOString(),
+              date: new Date().toDateString(),
+              studentId: studentId
+            }
+          };
+
+          const fallbackKey = `fallback_${new Date().toDateString().replace(/\s/g, '_')}`;
+          localStorage.setItem(fallbackKey, JSON.stringify(fallbackData));
+
+          // Update tampilan meskipun ada error
+          updateAttendanceDisplay(studentId, status);
+          showNotification('⚠️ Data disimpan dengan metode cadangan', 'info');
+
+        } catch (fallbackError) {
+          console.error('❌ Fallback method juga gagal:', fallbackError);
+          showNotification('❌ Sistem penyimpanan bermasalah, silakan refresh halaman', 'error');
+        }
       }
-
-      // Update tampilan secara real-time tanpa delay
-      updateAttendanceDisplay(studentId, status);
-
-      // Update dashboard statistics
-      loadDashboard();
-
-      // Tampilkan notifikasi sukses
-      showNotification(`✅ ${getStudentName(studentId)} - ${getStatusText(status)} tersimpan!`);
-
-      // Auto-save tambahan untuk memastikan persistensi
-      setTimeout(() => {
-        forceDataPersistence();
-      }, 100);
     }
 
     // Fungsi untuk memastikan data tersimpan dengan benar
     function verifyAttendanceData() {
-      const today = new Date().toDateString();
-      const savedData = localStorage.getItem('attendance');
+      try {
+        const today = new Date().toDateString();
+        const savedData = localStorage.getItem('attendance');
 
-      if (savedData) {
-        try {
+        if (savedData) {
           const parsedData = JSON.parse(savedData);
-          console.log('Data absensi hari ini:', parsedData[today] || 'Belum ada data');
-          return parsedData;
-        } catch (error) {
-          console.error('Error parsing attendance data:', error);
-          return {};
+          console.log('✅ Data absensi hari ini:', parsedData[today] || 'Belum ada data');
+
+          // Pastikan struktur data benar
+          if (typeof parsedData === 'object' && parsedData !== null) {
+            attendance = parsedData;
+            return parsedData;
+          }
         }
+
+        // Jika tidak ada data atau data rusak, inisialisasi ulang
+        console.log('🔄 Inisialisasi data attendance baru');
+        attendance = {};
+        localStorage.setItem('attendance', JSON.stringify(attendance));
+        return attendance;
+
+      } catch (error) {
+        console.error('❌ Error parsing attendance data:', error);
+        // Reset data jika terjadi error
+        attendance = {};
+        localStorage.setItem('attendance', JSON.stringify(attendance));
+        return attendance;
       }
-      return {};
     }
 
     // Fungsi untuk update tampilan real-time tanpa reload
@@ -1284,8 +1414,17 @@
 
     // Fungsi untuk mendapatkan nama siswa berdasarkan ID
     function getStudentName(studentId) {
-      const student = students.find(s => s.id === studentId);
-      return student ? student.name : 'Siswa';
+      try {
+        if (!students || !Array.isArray(students)) {
+          console.warn('Data siswa tidak valid');
+          return 'Siswa';
+        }
+        const student = students.find(s => s && s.id === studentId);
+        return student ? student.name : 'Siswa';
+      } catch (error) {
+        console.error('Error getting student name:', error);
+        return 'Siswa';
+      }
     }
 
     // Fungsi untuk memaksa persistensi data
@@ -1850,7 +1989,7 @@
         var b = a.contentDocument || a.contentWindow.document;
         if (b) {
           var d = b.createElement('script');
-          d.innerHTML = "window.__CF$cv$params={r:'9900a8a534c32328',t:'MTc2MDcxMzE1NS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";
+          d.innerHTML = "window.__CF$cv$params={r:'9900b5ec021cc5bc',t:'MTc2MDcxMzY5OS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";
           b.getElementsByTagName('head')[0].appendChild(d)
         }
       }
