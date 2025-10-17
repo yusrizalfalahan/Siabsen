@@ -446,10 +446,12 @@
       // Pastikan data dari localStorage dimuat dengan benar
       loadDataFromStorage();
       updateCurrentDate();
-      loadDashboard();
       populateClassSelects();
       populateMonthSelect();
-      showPage('dashboard');
+
+      // Simpan halaman terakhir yang dibuka
+      const lastPage = localStorage.getItem('currentPage') || 'dashboard';
+      showPage(lastPage);
 
       // Verifikasi data absensi saat halaman dimuat
       verifyAttendanceData();
@@ -519,6 +521,9 @@
         page.classList.add('hidden');
       });
       document.getElementById(pageId + '-page').classList.remove('hidden');
+
+      // Simpan halaman aktif ke localStorage
+      localStorage.setItem('currentPage', pageId);
 
       closeSidebar();
 
@@ -1092,17 +1097,27 @@
 
     // Reports Functions
     function loadReports() {
+      // Pastikan data terbaru dimuat dari localStorage
+      loadDataFromStorage();
       populateClassSelects();
+
       const tbody = document.getElementById('reportsTable');
       tbody.innerHTML = '';
 
       const selectedClass = document.getElementById('reportClass').value;
       const selectedMonth = document.getElementById('reportMonth').value;
 
+      // Simpan filter yang dipilih
+      localStorage.setItem('reportClassFilter', selectedClass);
+      localStorage.setItem('reportMonthFilter', selectedMonth);
+
       let filteredStudents = students;
       if (selectedClass) {
         filteredStudents = students.filter(s => s.class === selectedClass);
       }
+
+      console.log('Loading reports for', filteredStudents.length, 'students');
+      console.log('Attendance data available for', Object.keys(attendance).length, 'days');
 
       filteredStudents.forEach(student => {
         const stats = calculateStudentStats(student.id, selectedMonth);
@@ -1123,6 +1138,17 @@
         tbody.appendChild(row);
       });
 
+      // Restore filter yang tersimpan
+      const savedClassFilter = localStorage.getItem('reportClassFilter');
+      const savedMonthFilter = localStorage.getItem('reportMonthFilter');
+
+      if (savedClassFilter) {
+        document.getElementById('reportClass').value = savedClassFilter;
+      }
+      if (savedMonthFilter) {
+        document.getElementById('reportMonth').value = savedMonthFilter;
+      }
+
       loadAttendanceChart();
       loadAttendanceStats();
     }
@@ -1133,10 +1159,28 @@
         sakit = 0,
         alfa = 0;
 
-      Object.keys(attendance).forEach(date => {
-        if (month && !date.includes(month)) return;
+      // Pastikan data attendance ada dan valid
+      if (!attendance || typeof attendance !== 'object') {
+        console.warn('Data attendance tidak valid:', attendance);
+        return {
+          hadir: 0,
+          izin: 0,
+          sakit: 0,
+          alfa: 0,
+          percentage: 0
+        };
+      }
 
-        if (attendance[date][studentId]) {
+      Object.keys(attendance).forEach(date => {
+        // Filter berdasarkan bulan jika dipilih
+        if (month && month !== '') {
+          const dateObj = new Date(date);
+          const dateMonth = String(dateObj.getMonth() + 1).padStart(2, '0');
+          if (dateMonth !== month) return;
+        }
+
+        // Periksa apakah siswa memiliki data absensi pada tanggal tersebut
+        if (attendance[date] && attendance[date][studentId]) {
           const status = attendance[date][studentId].status;
           switch (status) {
             case 'hadir':
@@ -1158,6 +1202,15 @@
       const total = hadir + izin + sakit + alfa;
       const percentage = total > 0 ? Math.round((hadir / total) * 100) : 0;
 
+      console.log(`Stats for student ${studentId}:`, {
+        hadir,
+        izin,
+        sakit,
+        alfa,
+        total,
+        percentage
+      });
+
       return {
         hadir,
         izin,
@@ -1170,6 +1223,12 @@
     function loadAttendanceChart() {
       const ctx = document.getElementById('attendanceChart').getContext('2d');
 
+      // Pastikan data terbaru dimuat
+      if (!attendance || Object.keys(attendance).length === 0) {
+        console.warn('Tidak ada data attendance untuk chart');
+        return;
+      }
+
       const classNames = classes.map(cls => cls.name);
       const attendanceData = classes.map(cls => {
         const classStudents = students.filter(s => s.class === cls.name);
@@ -1180,7 +1239,7 @@
 
         Object.keys(attendance).forEach(date => {
           classStudents.forEach(student => {
-            if (attendance[date][student.id]) {
+            if (attendance[date] && attendance[date][student.id]) {
               totalDays++;
               if (attendance[date][student.id].status === 'hadir') {
                 totalPresent++;
@@ -1191,6 +1250,12 @@
 
         return totalDays > 0 ? Math.round((totalPresent / totalDays) * 100) : 0;
       });
+
+      // Hapus chart yang sudah ada jika ada
+      const existingChart = Chart.getChart(ctx);
+      if (existingChart) {
+        existingChart.destroy();
+      }
 
       new Chart(ctx, {
         type: 'pie',
@@ -1204,7 +1269,12 @@
           }]
         },
         options: {
-          responsive: true
+          responsive: true,
+          plugins: {
+            legend: {
+              position: 'bottom'
+            }
+          }
         }
       });
     }
@@ -1218,8 +1288,16 @@
         totalSakit = 0,
         totalAlfa = 0;
 
+      // Pastikan data terbaru dimuat
+      if (!students || students.length === 0) {
+        console.warn('Tidak ada data siswa untuk statistik');
+        return;
+      }
+
+      const selectedMonth = document.getElementById('reportMonth').value;
+
       students.forEach(student => {
-        const stats = calculateStudentStats(student.id);
+        const stats = calculateStudentStats(student.id, selectedMonth);
         totalHadir += stats.hadir;
         totalIzin += stats.izin;
         totalSakit += stats.sakit;
@@ -1254,9 +1332,21 @@
         }
       ];
 
+      // Tambahkan total keseluruhan
+      const totalDiv = document.createElement('div');
+      totalDiv.className = 'flex items-center justify-between p-3 bg-blue-50 rounded-lg mb-3 border border-blue-200';
+      totalDiv.innerHTML = `
+                <div class="flex items-center">
+                    <span class="mr-2">📊</span>
+                    <span class="font-bold text-blue-800">Total Keseluruhan</span>
+                </div>
+                <span class="text-blue-800 font-bold">${total}</span>
+            `;
+      container.appendChild(totalDiv);
+
       stats.forEach(stat => {
         const statDiv = document.createElement('div');
-        statDiv.className = 'flex items-center justify-between p-3 bg-gray-50 rounded-lg';
+        statDiv.className = 'flex items-center justify-between p-3 bg-gray-50 rounded-lg mb-2';
         statDiv.innerHTML = `
                     <div class="flex items-center">
                         <span class="mr-2">${stat.icon}</span>
@@ -1265,6 +1355,14 @@
                     <span class="${stat.color} font-bold">${stat.value}</span>
                 `;
         container.appendChild(statDiv);
+      });
+
+      console.log('Statistik dimuat:', {
+        totalHadir,
+        totalIzin,
+        totalSakit,
+        totalAlfa,
+        total
       });
     }
 
@@ -1421,6 +1519,22 @@
     // Search and Filter Functions
     document.getElementById('searchStudent').addEventListener('input', loadStudents);
     document.getElementById('filterClass').addEventListener('change', loadStudents);
+
+    // Event listeners untuk filter rekap absensi
+    document.addEventListener('DOMContentLoaded', function() {
+      // Tambahkan event listener setelah DOM dimuat
+      setTimeout(() => {
+        const reportClassSelect = document.getElementById('reportClass');
+        const reportMonthSelect = document.getElementById('reportMonth');
+
+        if (reportClassSelect) {
+          reportClassSelect.addEventListener('change', loadReports);
+        }
+        if (reportMonthSelect) {
+          reportMonthSelect.addEventListener('change', loadReports);
+        }
+      }, 100);
+    });
   </script>
   <script>
     (function() {
@@ -1428,7 +1542,7 @@
         var b = a.contentDocument || a.contentWindow.document;
         if (b) {
           var d = b.createElement('script');
-          d.innerHTML = "window.__CF$cv$params={r:'990077245790fdbb',t:'MTc2MDcxMTEyOC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";
+          d.innerHTML = "window.__CF$cv$params={r:'99008db0d150fdbb',t:'MTc2MDcxMjA1Mi4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";
           b.getElementsByTagName('head')[0].appendChild(d)
         }
       }
