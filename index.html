@@ -160,6 +160,11 @@
       <a href="#" onclick="showPage('reports')" class="flex items-center p-3 rounded-lg hover:bg-blue-50 text-gray-700 mb-2">
         <span class="mr-3">📊</span> Rekap & Ekspor
       </a>
+      <div class="border-t border-gray-200 mt-4 pt-4">
+        <button onclick="resetAllData()" class="w-full flex items-center p-3 rounded-lg hover:bg-red-50 text-red-600 font-medium">
+          <span class="mr-3">🗑️</span> Reset Semua Data
+        </button>
+      </div>
     </nav>
   </div>
 
@@ -229,6 +234,20 @@
           <div class="card p-6">
             <h3 class="text-lg font-semibold mb-4">Wali Kelas Aktif</h3>
             <div id="activeTeachers" class="space-y-3"></div>
+          </div>
+        </div>
+
+        <!-- Storage Monitor -->
+        <div class="card p-6 mt-6">
+          <h3 class="text-lg font-semibold mb-4">💾 Status Penyimpanan Data</h3>
+          <div id="storageMonitor" class="space-y-3">
+            <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+              <span class="text-sm text-gray-600">Memuat informasi storage...</span>
+            </div>
+          </div>
+          <div class="mt-4 text-xs text-gray-500">
+            <p>💡 <strong>Tips:</strong> Sistem akan otomatis membersihkan data lama untuk mengoptimalkan penyimpanan</p>
+            <p>📦 Data lebih dari 7 hari akan diarsipkan, backup lebih dari 30 hari akan dihapus</p>
           </div>
         </div>
       </div>
@@ -561,101 +580,348 @@
       loadAttendanceStats();
     }
 
-    // Fungsi untuk memuat data dari localStorage
-    function loadDataFromStorage() {
-      try {
-        // Cek apakah localStorage tersedia
-        if (typeof(Storage) === "undefined") {
-          console.error('❌ Browser tidak mendukung localStorage');
-          showNotification('❌ Browser tidak mendukung penyimpanan data', 'error');
-          return;
-        }
+    // Enhanced Storage System untuk jangka panjang
+    const StorageManager = {
+      // Cek kapasitas localStorage yang tersedia
+      getStorageInfo() {
+        try {
+          const testKey = 'storage_test';
+          const testData = 'x'.repeat(1024); // 1KB test data
+          let used = 0;
 
-        const savedStudents = localStorage.getItem('students');
-        const savedClasses = localStorage.getItem('classes');
-        const savedAttendance = localStorage.getItem('attendance');
+          // Hitung ukuran data yang sudah ada
+          for (let key in localStorage) {
+            if (localStorage.hasOwnProperty(key)) {
+              used += localStorage[key].length + key.length;
+            }
+          }
+
+          // Test kapasitas maksimal
+          let available = 0;
+          try {
+            for (let i = 0; i < 10000; i++) {
+              localStorage.setItem(testKey + i, testData);
+              available += testData.length;
+            }
+          } catch (e) {
+            // Bersihkan test data
+            for (let i = 0; i < 10000; i++) {
+              localStorage.removeItem(testKey + i);
+            }
+          }
+
+          return {
+            used: Math.round(used / 1024), // KB
+            available: Math.round(available / 1024), // KB
+            total: Math.round((used + available) / 1024), // KB
+            percentage: Math.round((used / (used + available)) * 100)
+          };
+        } catch (error) {
+          console.error('Error checking storage:', error);
+          return {
+            used: 0,
+            available: 0,
+            total: 0,
+            percentage: 0
+          };
+        }
+      },
+
+      // Kompresi data untuk menghemat ruang
+      compressData(data) {
+        try {
+          const jsonString = JSON.stringify(data);
+          // Simple compression: hapus spasi berlebih dan karakter tidak perlu
+          return jsonString.replace(/\s+/g, ' ').trim();
+        } catch (error) {
+          console.error('Error compressing data:', error);
+          return JSON.stringify(data);
+        }
+      },
+
+      // Dekompresi data
+      decompressData(compressedData) {
+        try {
+          return JSON.parse(compressedData);
+        } catch (error) {
+          console.error('Error decompressing data:', error);
+          return null;
+        }
+      },
+
+      // Sistem penyimpanan berlapis dengan fallback
+      saveData(key, data) {
+        try {
+          const compressedData = this.compressData(data);
+          const storageInfo = this.getStorageInfo();
+
+          console.log(`💾 Storage info - Used: ${storageInfo.used}KB (${storageInfo.percentage}%)`);
+
+          // Cek apakah storage hampir penuh (>80%)
+          if (storageInfo.percentage > 80) {
+            console.warn('⚠️ Storage hampir penuh, melakukan pembersihan...');
+            this.cleanupOldData();
+          }
+
+          // Coba simpan ke localStorage utama
+          try {
+            localStorage.setItem(key, compressedData);
+            console.log(`✅ Data ${key} berhasil disimpan ke localStorage`);
+            return true;
+          } catch (storageError) {
+            console.warn(`⚠️ localStorage penuh untuk ${key}, mencoba alternatif...`);
+
+            // Fallback 1: Bersihkan data lama dan coba lagi
+            this.cleanupOldData();
+            try {
+              localStorage.setItem(key, compressedData);
+              console.log(`✅ Data ${key} berhasil disimpan setelah cleanup`);
+              return true;
+            } catch (retryError) {
+              console.warn(`⚠️ Masih gagal, menggunakan IndexedDB...`);
+
+              // Fallback 2: Gunakan IndexedDB
+              return this.saveToIndexedDB(key, data);
+            }
+          }
+        } catch (error) {
+          console.error(`❌ Error saving ${key}:`, error);
+          return false;
+        }
+      },
+
+      // Muat data dengan fallback
+      loadData(key) {
+        try {
+          // Coba dari localStorage dulu
+          const localData = localStorage.getItem(key);
+          if (localData && localData !== 'null' && localData !== 'undefined') {
+            const decompressed = this.decompressData(localData);
+            if (decompressed !== null) {
+              console.log(`✅ Data ${key} dimuat dari localStorage`);
+              return decompressed;
+            }
+          }
+
+          // Fallback: Coba dari IndexedDB
+          console.log(`🔄 Mencoba memuat ${key} dari IndexedDB...`);
+          return this.loadFromIndexedDB(key);
+
+        } catch (error) {
+          console.error(`❌ Error loading ${key}:`, error);
+          return null;
+        }
+      },
+
+      // Bersihkan data lama untuk menghemat ruang
+      cleanupOldData() {
+        try {
+          console.log('🧹 Membersihkan data lama...');
+
+          // Hapus backup lama (lebih dari 30 hari)
+          const thirtyDaysAgo = new Date();
+          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+          for (let key in localStorage) {
+            if (key.startsWith('attendance_backup_')) {
+              const dateStr = key.replace('attendance_backup_', '').replace(/_/g, ' ');
+              const backupDate = new Date(dateStr);
+
+              if (backupDate < thirtyDaysAgo) {
+                localStorage.removeItem(key);
+                console.log(`🗑️ Hapus backup lama: ${key}`);
+              }
+            }
+          }
+
+          // Kompres data absensi lama (lebih dari 7 hari)
+          const sevenDaysAgo = new Date();
+          sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+          if (attendance && typeof attendance === 'object') {
+            let cleaned = false;
+            Object.keys(attendance).forEach(date => {
+              const attendanceDate = new Date(date);
+              if (attendanceDate < sevenDaysAgo) {
+                // Simpan ke compressed storage dan hapus dari main storage
+                this.archiveOldAttendance(date, attendance[date]);
+                delete attendance[date];
+                cleaned = true;
+              }
+            });
+
+            if (cleaned) {
+              localStorage.setItem('attendance', this.compressData(attendance));
+              console.log('📦 Data absensi lama berhasil diarsipkan');
+            }
+          }
+
+        } catch (error) {
+          console.error('❌ Error during cleanup:', error);
+        }
+      },
+
+      // Arsipkan data absensi lama
+      archiveOldAttendance(date, data) {
+        try {
+          const archiveKey = `archive_${date.replace(/\s/g, '_')}`;
+          const compressedArchive = this.compressData(data);
+          localStorage.setItem(archiveKey, compressedArchive);
+          console.log(`📦 Arsip dibuat: ${archiveKey}`);
+        } catch (error) {
+          console.warn(`⚠️ Gagal mengarsipkan ${date}:`, error);
+        }
+      },
+
+      // IndexedDB sebagai fallback storage
+      saveToIndexedDB(key, data) {
+        return new Promise((resolve) => {
+          try {
+            const request = indexedDB.open('AbsensiDB', 1);
+
+            request.onerror = () => {
+              console.error('❌ IndexedDB error');
+              resolve(false);
+            };
+
+            request.onsuccess = (event) => {
+              const db = event.target.result;
+              const transaction = db.transaction(['attendance'], 'readwrite');
+              const store = transaction.objectStore('attendance');
+
+              store.put({
+                key: key,
+                data: data,
+                timestamp: Date.now()
+              });
+
+              transaction.oncomplete = () => {
+                console.log(`✅ Data ${key} berhasil disimpan ke IndexedDB`);
+                resolve(true);
+              };
+
+              transaction.onerror = () => {
+                console.error('❌ IndexedDB transaction error');
+                resolve(false);
+              };
+            };
+
+            request.onupgradeneeded = (event) => {
+              const db = event.target.result;
+              if (!db.objectStoreNames.contains('attendance')) {
+                db.createObjectStore('attendance', {
+                  keyPath: 'key'
+                });
+              }
+            };
+
+          } catch (error) {
+            console.error('❌ IndexedDB save error:', error);
+            resolve(false);
+          }
+        });
+      },
+
+      // Muat dari IndexedDB
+      loadFromIndexedDB(key) {
+        return new Promise((resolve) => {
+          try {
+            const request = indexedDB.open('AbsensiDB', 1);
+
+            request.onerror = () => {
+              console.error('❌ IndexedDB load error');
+              resolve(null);
+            };
+
+            request.onsuccess = (event) => {
+              const db = event.target.result;
+              const transaction = db.transaction(['attendance'], 'readonly');
+              const store = transaction.objectStore('attendance');
+              const getRequest = store.get(key);
+
+              getRequest.onsuccess = () => {
+                if (getRequest.result) {
+                  console.log(`✅ Data ${key} dimuat dari IndexedDB`);
+                  resolve(getRequest.result.data);
+                } else {
+                  resolve(null);
+                }
+              };
+
+              getRequest.onerror = () => {
+                console.error('❌ IndexedDB get error');
+                resolve(null);
+              };
+            };
+
+          } catch (error) {
+            console.error('❌ IndexedDB load error:', error);
+            resolve(null);
+          }
+        });
+      }
+    };
+
+    // Fungsi untuk memuat data dari storage yang telah ditingkatkan
+    async function loadDataFromStorage() {
+      try {
+        console.log('🔄 Memuat data dari enhanced storage system...');
+
+        // Cek info storage
+        const storageInfo = StorageManager.getStorageInfo();
+        console.log(`📊 Storage Status: ${storageInfo.used}KB/${storageInfo.total}KB (${storageInfo.percentage}%)`);
 
         // Load students data
-        if (savedStudents && savedStudents !== 'null' && savedStudents !== 'undefined') {
-          try {
-            const parsedStudents = JSON.parse(savedStudents);
-            if (Array.isArray(parsedStudents)) {
-              students = parsedStudents;
-              console.log('✅ Data siswa dimuat:', students.length, 'siswa');
-            } else {
-              console.warn('⚠️ Data siswa tidak valid, menggunakan array kosong');
-              students = [];
-            }
-          } catch (parseError) {
-            console.error('❌ Error parsing students data:', parseError);
-            students = [];
-          }
+        const loadedStudents = await StorageManager.loadData('students');
+        if (loadedStudents && Array.isArray(loadedStudents)) {
+          students = loadedStudents;
+          console.log('✅ Data siswa dimuat:', students.length, 'siswa');
         } else {
           students = [];
+          console.log('ℹ️ Tidak ada data siswa, menggunakan array kosong');
         }
 
         // Load classes data
-        if (savedClasses && savedClasses !== 'null' && savedClasses !== 'undefined') {
-          try {
-            const parsedClasses = JSON.parse(savedClasses);
-            if (Array.isArray(parsedClasses)) {
-              classes = parsedClasses;
-              console.log('✅ Data kelas dimuat:', classes.length, 'kelas');
-            } else {
-              console.warn('⚠️ Data kelas tidak valid, menggunakan array kosong');
-              classes = [];
-            }
-          } catch (parseError) {
-            console.error('❌ Error parsing classes data:', parseError);
-            classes = [];
-          }
+        const loadedClasses = await StorageManager.loadData('classes');
+        if (loadedClasses && Array.isArray(loadedClasses)) {
+          classes = loadedClasses;
+          console.log('✅ Data kelas dimuat:', classes.length, 'kelas');
         } else {
           classes = [];
+          console.log('ℹ️ Tidak ada data kelas, menggunakan array kosong');
         }
 
         // Load attendance data
-        if (savedAttendance && savedAttendance !== 'null' && savedAttendance !== 'undefined') {
-          try {
-            const parsedAttendance = JSON.parse(savedAttendance);
-            if (typeof parsedAttendance === 'object' && parsedAttendance !== null) {
-              attendance = parsedAttendance;
-              console.log('✅ Data absensi dimuat:', Object.keys(attendance).length, 'hari');
-            } else {
-              console.warn('⚠️ Data absensi tidak valid, menggunakan object kosong');
-              attendance = {};
-            }
-          } catch (parseError) {
-            console.error('❌ Error parsing attendance data:', parseError);
-            attendance = {};
-          }
+        const loadedAttendance = await StorageManager.loadData('attendance');
+        if (loadedAttendance && typeof loadedAttendance === 'object') {
+          attendance = loadedAttendance;
+          console.log('✅ Data absensi dimuat:', Object.keys(attendance).length, 'hari');
         } else {
           attendance = {};
+          console.log('ℹ️ Tidak ada data absensi, menggunakan object kosong');
         }
 
-        // Simpan data yang sudah divalidasi kembali ke localStorage
-        localStorage.setItem('students', JSON.stringify(students));
-        localStorage.setItem('classes', JSON.stringify(classes));
-        localStorage.setItem('attendance', JSON.stringify(attendance));
+        // Validasi dan simpan ulang jika perlu
+        await StorageManager.saveData('students', students);
+        await StorageManager.saveData('classes', classes);
+        await StorageManager.saveData('attendance', attendance);
 
-        console.log('✅ Semua data berhasil dimuat dan divalidasi');
+        console.log('✅ Semua data berhasil dimuat dengan enhanced storage system');
+
+        // Tampilkan info storage kepada user jika hampir penuh
+        if (storageInfo.percentage > 70) {
+          showNotification(`⚠️ Penyimpanan ${storageInfo.percentage}% penuh. Sistem akan otomatis membersihkan data lama.`, 'info');
+        }
 
       } catch (error) {
-        console.error('❌ Error loading data from localStorage:', error);
-        // Reset data jika terjadi error
+        console.error('❌ Error loading data from enhanced storage:', error);
+
+        // Fallback ke data kosong
         students = [];
         classes = [];
         attendance = {};
 
-        // Simpan data kosong yang valid
-        try {
-          localStorage.setItem('students', JSON.stringify(students));
-          localStorage.setItem('classes', JSON.stringify(classes));
-          localStorage.setItem('attendance', JSON.stringify(attendance));
-        } catch (saveError) {
-          console.error('❌ Error saving empty data:', saveError);
-        }
-
-        showNotification('⚠️ Data direset karena terjadi error', 'info');
+        showNotification('⚠️ Terjadi error saat memuat data. Sistem direset ke kondisi awal.', 'info');
       }
     }
 
@@ -799,6 +1065,176 @@
 
       loadActiveTeachers();
       loadClassChart();
+      loadStorageMonitor();
+    }
+
+    // Storage Monitor untuk Dashboard
+    function loadStorageMonitor() {
+      try {
+        const storageInfo = StorageManager.getStorageInfo();
+        const container = document.getElementById('storageMonitor');
+
+        // Tentukan warna berdasarkan persentase penggunaan
+        let statusColor = 'bg-green-50 border-green-200';
+        let statusIcon = '✅';
+        let statusText = 'Optimal';
+
+        if (storageInfo.percentage > 80) {
+          statusColor = 'bg-red-50 border-red-200';
+          statusIcon = '⚠️';
+          statusText = 'Hampir Penuh';
+        } else if (storageInfo.percentage > 60) {
+          statusColor = 'bg-yellow-50 border-yellow-200';
+          statusIcon = '⚡';
+          statusText = 'Perlu Perhatian';
+        }
+
+        container.innerHTML = `
+                    <div class="flex items-center justify-between p-3 ${statusColor} rounded-lg border">
+                        <div class="flex items-center">
+                            <span class="mr-2 text-lg">${statusIcon}</span>
+                            <div>
+                                <p class="font-medium text-sm">Status: ${statusText}</p>
+                                <p class="text-xs text-gray-600">Penggunaan: ${storageInfo.used}KB / ${storageInfo.total}KB</p>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <div class="text-lg font-bold">${storageInfo.percentage}%</div>
+                            <div class="text-xs text-gray-500">Terpakai</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Progress Bar -->
+                    <div class="mt-3">
+                        <div class="flex justify-between text-xs text-gray-500 mb-1">
+                            <span>Ruang Tersedia</span>
+                            <span>${storageInfo.total - storageInfo.used}KB tersisa</span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-2">
+                            <div class="h-2 rounded-full transition-all duration-300" 
+                                 style="width: ${storageInfo.percentage}%; background-color: ${storageInfo.percentage > 80 ? '#ef4444' : storageInfo.percentage > 60 ? '#f59e0b' : '#10b981'}">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Storage Actions -->
+                    <div class="mt-3 flex gap-2">
+                        <button onclick="StorageManager.cleanupOldData(); loadStorageMonitor(); showNotification('🧹 Pembersihan storage selesai', 'success');" 
+                                class="text-xs px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600">
+                            🧹 Bersihkan Data Lama
+                        </button>
+                        <button onclick="showStorageDetails()" 
+                                class="text-xs px-3 py-1 bg-gray-500 text-white rounded hover:bg-gray-600">
+                            📊 Detail Storage
+                        </button>
+                    </div>
+                `;
+
+        // Auto-refresh storage monitor setiap 30 detik
+        setTimeout(loadStorageMonitor, 30000);
+
+      } catch (error) {
+        console.error('❌ Error loading storage monitor:', error);
+        const container = document.getElementById('storageMonitor');
+        container.innerHTML = `
+                    <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <span class="text-sm text-gray-600">❌ Gagal memuat info storage</span>
+                    </div>
+                `;
+      }
+    }
+
+    // Tampilkan detail storage
+    function showStorageDetails() {
+      try {
+        const storageInfo = StorageManager.getStorageInfo();
+
+        // Hitung detail penggunaan per kategori
+        let studentsSize = 0,
+          classesSize = 0,
+          attendanceSize = 0,
+          othersSize = 0;
+
+        for (let key in localStorage) {
+          if (localStorage.hasOwnProperty(key)) {
+            const size = localStorage[key].length + key.length;
+
+            if (key === 'students') {
+              studentsSize = Math.round(size / 1024);
+            } else if (key === 'classes') {
+              classesSize = Math.round(size / 1024);
+            } else if (key === 'attendance' || key.startsWith('attendance_')) {
+              attendanceSize += Math.round(size / 1024);
+            } else {
+              othersSize += Math.round(size / 1024);
+            }
+          }
+        }
+
+        // Buat modal detail
+        const detailDiv = document.createElement('div');
+        detailDiv.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4';
+        detailDiv.innerHTML = `
+                    <div class="bg-white rounded-lg max-w-md w-full max-h-[80vh] overflow-y-auto">
+                        <div class="p-6 border-b border-gray-200">
+                            <h3 class="text-xl font-semibold">📊 Detail Penggunaan Storage</h3>
+                        </div>
+                        <div class="p-6">
+                            <div class="space-y-4">
+                                <div class="flex justify-between items-center p-3 bg-blue-50 rounded-lg">
+                                    <span class="font-medium">👥 Data Siswa</span>
+                                    <span class="font-bold">${studentsSize}KB</span>
+                                </div>
+                                <div class="flex justify-between items-center p-3 bg-green-50 rounded-lg">
+                                    <span class="font-medium">🏫 Data Kelas</span>
+                                    <span class="font-bold">${classesSize}KB</span>
+                                </div>
+                                <div class="flex justify-between items-center p-3 bg-purple-50 rounded-lg">
+                                    <span class="font-medium">📅 Data Absensi</span>
+                                    <span class="font-bold">${attendanceSize}KB</span>
+                                </div>
+                                <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                                    <span class="font-medium">🔧 Data Lainnya</span>
+                                    <span class="font-bold">${othersSize}KB</span>
+                                </div>
+                                
+                                <hr class="my-4">
+                                
+                                <div class="flex justify-between items-center p-3 bg-yellow-50 rounded-lg border border-yellow-200">
+                                    <span class="font-bold">📊 Total Terpakai</span>
+                                    <span class="font-bold text-lg">${storageInfo.used}KB</span>
+                                </div>
+                                <div class="flex justify-between items-center p-3 bg-green-50 rounded-lg border border-green-200">
+                                    <span class="font-bold">💾 Total Tersedia</span>
+                                    <span class="font-bold text-lg">${storageInfo.total}KB</span>
+                                </div>
+                            </div>
+                            
+                            <div class="mt-6 p-4 bg-blue-50 rounded-lg">
+                                <h4 class="font-semibold text-blue-800 mb-2">💡 Tips Optimasi:</h4>
+                                <ul class="text-sm text-blue-700 space-y-1">
+                                    <li>• Data absensi lama (>7 hari) akan otomatis diarsipkan</li>
+                                    <li>• Backup lama (>30 hari) akan otomatis dihapus</li>
+                                    <li>• Gunakan tombol "Bersihkan Data Lama" untuk optimasi manual</li>
+                                    <li>• Sistem menggunakan kompresi data untuk menghemat ruang</li>
+                                </ul>
+                            </div>
+                        </div>
+                        <div class="p-6 border-t border-gray-200 flex justify-end">
+                            <button onclick="this.parentElement.parentElement.parentElement.remove()" 
+                                    class="px-6 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
+                                Tutup
+                            </button>
+                        </div>
+                    </div>
+                `;
+
+        document.body.appendChild(detailDiv);
+
+      } catch (error) {
+        console.error('❌ Error showing storage details:', error);
+        showNotification('❌ Gagal menampilkan detail storage', 'error');
+      }
     }
 
     function calculateTodayAttendance() {
@@ -951,7 +1387,7 @@
       document.getElementById('studentModal').classList.remove('flex');
     }
 
-    function saveStudent(event) {
+    async function saveStudent(event) {
       event.preventDefault();
 
       const name = document.getElementById('studentName').value;
@@ -959,32 +1395,43 @@
       const studentClass = document.getElementById('studentClass').value;
       const note = document.getElementById('studentNote').value;
 
-      if (currentEditingStudent) {
-        const index = students.findIndex(s => s.id === currentEditingStudent);
-        students[index] = {
-          ...students[index],
-          name,
-          nis,
-          class: studentClass,
-          note
-        };
-        showNotification('✅ Data siswa berhasil diperbarui');
-      } else {
-        const student = {
-          id: Date.now().toString(),
-          name,
-          nis,
-          class: studentClass,
-          note
-        };
-        students.push(student);
-        showNotification('✅ Siswa baru berhasil ditambahkan');
-      }
+      try {
+        if (currentEditingStudent) {
+          const index = students.findIndex(s => s.id === currentEditingStudent);
+          students[index] = {
+            ...students[index],
+            name,
+            nis,
+            class: studentClass,
+            note
+          };
+          showNotification('✅ Data siswa berhasil diperbarui');
+        } else {
+          const student = {
+            id: Date.now().toString(),
+            name,
+            nis,
+            class: studentClass,
+            note
+          };
+          students.push(student);
+          showNotification('✅ Siswa baru berhasil ditambahkan');
+        }
 
-      localStorage.setItem('students', JSON.stringify(students));
-      closeStudentModal();
-      loadStudents();
-      loadDashboard();
+        // Gunakan enhanced storage system
+        const saveSuccess = await StorageManager.saveData('students', students);
+        if (!saveSuccess) {
+          throw new Error('Gagal menyimpan data siswa');
+        }
+
+        closeStudentModal();
+        loadStudents();
+        loadDashboard();
+
+      } catch (error) {
+        console.error('❌ Error saving student:', error);
+        showNotification('❌ Gagal menyimpan data siswa: ' + error.message, 'error');
+      }
     }
 
     function editStudent(id) {
@@ -1046,35 +1493,46 @@
       document.getElementById('classModal').classList.remove('flex');
     }
 
-    function saveClass(event) {
+    async function saveClass(event) {
       event.preventDefault();
 
       const name = document.getElementById('className').value;
       const teacher = document.getElementById('classTeacher').value;
 
-      if (currentEditingClass) {
-        const index = classes.findIndex(c => c.id === currentEditingClass);
-        classes[index] = {
-          ...classes[index],
-          name,
-          teacher
-        };
-        showNotification('✅ Data kelas berhasil diperbarui');
-      } else {
-        const cls = {
-          id: Date.now().toString(),
-          name,
-          teacher
-        };
-        classes.push(cls);
-        showNotification('✅ Kelas baru berhasil ditambahkan');
-      }
+      try {
+        if (currentEditingClass) {
+          const index = classes.findIndex(c => c.id === currentEditingClass);
+          classes[index] = {
+            ...classes[index],
+            name,
+            teacher
+          };
+          showNotification('✅ Data kelas berhasil diperbarui');
+        } else {
+          const cls = {
+            id: Date.now().toString(),
+            name,
+            teacher
+          };
+          classes.push(cls);
+          showNotification('✅ Kelas baru berhasil ditambahkan');
+        }
 
-      localStorage.setItem('classes', JSON.stringify(classes));
-      closeClassModal();
-      loadClasses();
-      populateClassSelects();
-      loadDashboard();
+        // Gunakan enhanced storage system
+        const saveSuccess = await StorageManager.saveData('classes', classes);
+        if (!saveSuccess) {
+          throw new Error('Gagal menyimpan data kelas');
+        }
+
+        closeClassModal();
+        loadClasses();
+        populateClassSelects();
+        loadDashboard();
+
+      } catch (error) {
+        console.error('❌ Error saving class:', error);
+        showNotification('❌ Gagal menyimpan data kelas: ' + error.message, 'error');
+      }
     }
 
     function editClass(id) {
@@ -1363,8 +1821,8 @@
       }
     }
 
-    // Fungsi untuk menyimpan semua data absensi ke localStorage
-    function saveAllAttendance() {
+    // Fungsi untuk menyimpan semua data absensi dengan enhanced storage
+    async function saveAllAttendance() {
       try {
         const today = new Date().toDateString();
 
@@ -1400,33 +1858,17 @@
           console.log(`✅ Menyimpan: ${studentName} - ${studentData.status}`);
         });
 
-        // Simpan ke localStorage dengan error handling yang lebih baik
-        try {
-          const attendanceString = JSON.stringify(attendance);
-          localStorage.setItem('attendance', attendanceString);
+        // Gunakan enhanced storage system
+        const saveSuccess = await StorageManager.saveData('attendance', attendance);
 
-          // Verifikasi penyimpanan
-          const verification = localStorage.getItem('attendance');
-          if (!verification) {
-            throw new Error('Data tidak tersimpan ke localStorage');
-          }
-
-          const parsedVerification = JSON.parse(verification);
-          if (!parsedVerification[today] || Object.keys(parsedVerification[today]).length === 0) {
-            throw new Error('Data hari ini tidak ditemukan setelah penyimpanan');
-          }
-
-          console.log('✅ Verifikasi berhasil: Data tersimpan dengan benar');
-
-        } catch (storageError) {
-          console.error('❌ Error saat menyimpan ke localStorage:', storageError);
-          throw new Error(`Gagal menyimpan ke localStorage: ${storageError.message}`);
+        if (!saveSuccess) {
+          throw new Error('Gagal menyimpan dengan enhanced storage system');
         }
 
         // Backup tambahan untuk keamanan
         try {
           const backupKey = `attendance_backup_${today.replace(/\s/g, '_')}`;
-          localStorage.setItem(backupKey, JSON.stringify(attendance[today]));
+          await StorageManager.saveData(backupKey, attendance[today]);
           console.log('💾 Backup data berhasil dibuat');
         } catch (backupError) {
           console.warn('⚠️ Gagal membuat backup:', backupError);
@@ -1465,8 +1907,22 @@
 
         // Tampilkan error yang lebih informatif
         let errorMessage = 'Gagal menyimpan data absensi';
-        if (error.message.includes('localStorage')) {
-          errorMessage = 'Penyimpanan penuh atau tidak tersedia';
+        if (error.message.includes('storage')) {
+          errorMessage = 'Sistem penyimpanan mengalami masalah. Data akan dicoba disimpan ulang.';
+
+          // Coba simpan ulang setelah cleanup
+          setTimeout(async () => {
+            try {
+              StorageManager.cleanupOldData();
+              const retrySuccess = await StorageManager.saveData('attendance', attendance);
+              if (retrySuccess) {
+                showNotification('✅ Data berhasil disimpan setelah pembersihan storage', 'success');
+              }
+            } catch (retryError) {
+              console.error('❌ Retry save failed:', retryError);
+            }
+          }, 2000);
+
         } else if (error.message.includes('JSON')) {
           errorMessage = 'Format data tidak valid';
         } else {
@@ -2496,6 +2952,144 @@
     // Jalankan auto-save setiap 30 detik
     setInterval(autoSaveData, 30000);
 
+    // Reset All Data Function
+    function resetAllData() {
+      // Buat modal konfirmasi dengan peringatan yang jelas
+      const confirmDiv = document.createElement('div');
+      confirmDiv.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+      confirmDiv.innerHTML = `
+                <div class="bg-white p-6 rounded-lg max-w-md mx-4">
+                    <h3 class="text-lg font-semibold mb-4 text-red-600">⚠️ Reset Semua Data</h3>
+                    <div class="mb-6">
+                        <p class="text-gray-700 mb-3"><strong>Peringatan:</strong> Tindakan ini akan menghapus SEMUA data:</p>
+                        <ul class="text-sm text-gray-600 space-y-1 ml-4">
+                            <li>• Semua data siswa</li>
+                            <li>• Semua data kelas</li>
+                            <li>• Semua data absensi</li>
+                            <li>• Semua riwayat dan backup</li>
+                        </ul>
+                        <p class="text-red-600 text-sm mt-3 font-medium">Tindakan ini TIDAK DAPAT DIBATALKAN!</p>
+                    </div>
+                    <div class="mb-4">
+                        <label class="flex items-center">
+                            <input type="checkbox" id="confirmReset" class="mr-2">
+                            <span class="text-sm">Saya memahami konsekuensinya dan ingin melanjutkan</span>
+                        </label>
+                    </div>
+                    <div class="flex gap-3">
+                        <button onclick="this.parentElement.parentElement.parentElement.remove()" 
+                                class="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50">
+                            Batal
+                        </button>
+                        <button onclick="confirmResetAll(); this.parentElement.parentElement.parentElement.remove()" 
+                                class="flex-1 px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600"
+                                id="confirmResetBtn" disabled>
+                            🔄 Ya, Reset Semua
+                        </button>
+                    </div>
+                </div>
+            `;
+
+      document.body.appendChild(confirmDiv);
+
+      // Enable/disable tombol berdasarkan checkbox
+      const checkbox = confirmDiv.querySelector('#confirmReset');
+      const resetBtn = confirmDiv.querySelector('#confirmResetBtn');
+
+      checkbox.addEventListener('change', function() {
+        resetBtn.disabled = !this.checked;
+        if (this.checked) {
+          resetBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        } else {
+          resetBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        }
+      });
+
+      // Set initial state
+      resetBtn.classList.add('opacity-50', 'cursor-not-allowed');
+    }
+
+    function confirmResetAll() {
+      try {
+        // Reset semua data ke kondisi awal
+        students = [];
+        classes = [];
+        attendance = {};
+        tempAttendanceData = {};
+
+        // Hapus semua data dari localStorage
+        localStorage.removeItem('students');
+        localStorage.removeItem('classes');
+        localStorage.removeItem('attendance');
+        localStorage.removeItem('permanentAttendance');
+        localStorage.removeItem('attendanceSaveLog');
+        localStorage.removeItem('reportClassFilter');
+        localStorage.removeItem('reportMonthFilter');
+        localStorage.removeItem('currentPage');
+
+        // Hapus backup data juga
+        const keys = Object.keys(localStorage);
+        keys.forEach(key => {
+          if (key.startsWith('attendance_backup_')) {
+            localStorage.removeItem(key);
+          }
+        });
+
+        // Inisialisasi ulang data kosong
+        localStorage.setItem('students', JSON.stringify([]));
+        localStorage.setItem('classes', JSON.stringify([]));
+        localStorage.setItem('attendance', JSON.stringify({}));
+
+        // Reset tampilan ke dashboard
+        showPage('dashboard');
+
+        // Refresh semua tampilan
+        loadDashboard();
+        populateClassSelects();
+
+        // Clear form dan tabel
+        const studentsTable = document.getElementById('studentsTable');
+        const classesTable = document.getElementById('classesTable');
+        const reportsTable = document.getElementById('reportsTable');
+
+        if (studentsTable) studentsTable.innerHTML = '';
+        if (classesTable) classesTable.innerHTML = '';
+        if (reportsTable) reportsTable.innerHTML = '';
+
+        // Reset attendance list
+        const attendanceList = document.getElementById('attendanceList');
+        if (attendanceList) {
+          attendanceList.classList.add('hidden');
+        }
+
+        // Reset form selects
+        const selects = ['filterClass', 'studentClass', 'attendanceClass', 'reportClass'];
+        selects.forEach(selectId => {
+          const select = document.getElementById(selectId);
+          if (select) {
+            // Hapus semua option kecuali yang pertama
+            while (select.children.length > 1) {
+              select.removeChild(select.lastChild);
+            }
+            select.selectedIndex = 0;
+          }
+        });
+
+        // Clear search input
+        const searchInput = document.getElementById('searchStudent');
+        if (searchInput) {
+          searchInput.value = '';
+        }
+
+        console.log('✅ Semua data berhasil direset');
+        showNotification('🔄 Semua data berhasil direset! Sistem kembali ke kondisi awal.', 'success');
+
+      } catch (error) {
+        console.error('❌ Error saat reset semua data:', error);
+        showNotification('❌ Gagal mereset data: ' + error.message, 'error');
+      }
+    }
+
     // Search and Filter Functions
     document.getElementById('searchStudent').addEventListener('input', loadStudents);
     document.getElementById('filterClass').addEventListener('change', loadStudents);
@@ -2522,7 +3116,7 @@
         var b = a.contentDocument || a.contentWindow.document;
         if (b) {
           var d = b.createElement('script');
-          d.innerHTML = "window.__CF$cv$params={r:'9900de3016c85ff0',t:'MTc2MDcxNTM0OS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";
+          d.innerHTML = "window.__CF$cv$params={r:'9905b1d795bea060',t:'MTc2MDc2NTk2MS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";
           b.getElementsByTagName('head')[0].appendChild(d)
         }
       }
