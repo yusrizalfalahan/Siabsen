@@ -7,6 +7,44 @@
   <title>Sistem Absensi Siswa Digital</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script type="module">
+    // Import Firebase modules
+    import {
+      initializeApp
+    } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+    import {
+      getFirestore,
+      doc,
+      setDoc,
+      getDoc,
+      onSnapshot,
+      collection,
+      getDocs
+    } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+
+    // Firebase configuration (demo config - replace with your own)
+    const firebaseConfig = {
+      apiKey: "demo-api-key",
+      authDomain: "demo-project.firebaseapp.com",
+      projectId: "demo-absensi-siswa",
+      storageBucket: "demo-project.appspot.com",
+      messagingSenderId: "123456789",
+      appId: "demo-app-id"
+    };
+
+    // Initialize Firebase
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    // Make Firebase available globally
+    window.firebaseDB = db;
+    window.firebaseDoc = doc;
+    window.firebaseSetDoc = setDoc;
+    window.firebaseGetDoc = getDoc;
+    window.firebaseOnSnapshot = onSnapshot;
+    window.firebaseCollection = collection;
+    window.firebaseGetDocs = getDocs;
+  </script>
   <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
     body {
@@ -148,8 +186,17 @@
         Rekap & Statistik
       </a>
     </nav>
-    <div class="absolute bottom-6 left-6 right-6">
-      <button onclick="resetAllData()" class="w-full bg-red-500 text-white py-2 px-4 rounded-lg hover:bg-red-600 transition-colors">
+    <div class="absolute bottom-6 left-6 right-6 space-y-2">
+      <button onclick="syncData()" class="w-full bg-blue-500 text-white py-2 px-4 rounded-lg hover:bg-blue-600 transition-colors text-sm">
+        🔄 Sinkronisasi Data
+      </button>
+      <button onclick="exportBackup()" class="w-full bg-green-500 text-white py-2 px-4 rounded-lg hover:bg-green-600 transition-colors text-sm">
+        💾 Backup Data
+      </button>
+      <button onclick="importBackup()" class="w-full bg-yellow-500 text-white py-2 px-4 rounded-lg hover:bg-yellow-600 transition-colors text-sm">
+        📥 Restore Data
+      </button>
+      <button onclick="resetAllData()" class="w-full bg-red-500 text-white py-2 px-4 rounded-lg hover:bg-red-600 transition-colors text-sm">
         🗑️ Reset Data
       </button>
     </div>
@@ -166,8 +213,14 @@
           </svg>
         </button>
         <h1 id="pageTitle" class="text-lg sm:text-2xl font-semibold text-gray-800 truncate mx-2">Dashboard</h1>
-        <div class="text-xs sm:text-sm text-gray-600 hidden xs:block" id="currentDate"></div>
-        <div class="text-xs text-gray-600 xs:hidden" id="currentDateMobile"></div>
+        <div class="flex items-center gap-2">
+          <div id="cloudStatus" class="flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-600">
+            <span id="cloudIcon">☁️</span>
+            <span id="cloudText">Offline</span>
+          </div>
+          <div class="text-xs sm:text-sm text-gray-600 hidden xs:block" id="currentDate"></div>
+          <div class="text-xs text-gray-600 xs:hidden" id="currentDateMobile"></div>
+        </div>
       </div>
     </header>
 
@@ -691,6 +744,91 @@
     </div>
   </div>
 
+  <!-- Cloud Settings Modal -->
+  <div id="cloudModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden">
+    <div class="flex items-center justify-center min-h-screen p-4">
+      <div class="bg-white rounded-2xl p-6 w-full max-w-md fade-in">
+        <div class="flex justify-between items-center mb-6">
+          <h3 class="text-xl font-semibold text-gray-800">☁️ Pengaturan Cloud</h3>
+          <button onclick="closeCloudModal()" class="text-gray-500 hover:text-gray-700 transition-colors">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="space-y-4">
+          <div>
+            <label for="schoolId" class="block text-sm font-medium text-gray-700 mb-2">
+              <span class="flex items-center">
+                <span class="mr-2">🏫</span>
+                ID Sekolah (Unik)
+              </span>
+            </label>
+            <input type="text" id="schoolId" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all" placeholder="Contoh: smp-negeri-1-jakarta">
+            <p class="text-xs text-gray-500 mt-1">ID ini akan digunakan untuk menyimpan dan mengakses data sekolah Anda</p>
+          </div>
+          <div class="bg-blue-50 p-4 rounded-lg">
+            <h4 class="font-semibold text-blue-800 mb-2">ℹ️ Cara Kerja Cloud Storage:</h4>
+            <ul class="text-sm text-blue-700 space-y-1">
+              <li>• Masukkan ID sekolah yang unik</li>
+              <li>• Data akan tersimpan di cloud secara otomatis</li>
+              <li>• Akses dari perangkat manapun dengan ID yang sama</li>
+              <li>• Data akan sinkron secara real-time</li>
+            </ul>
+          </div>
+          <div class="flex gap-3 pt-4">
+            <button onclick="connectToCloud()" class="flex-1 bg-blue-600 text-white py-3 px-4 rounded-lg hover:bg-blue-700 transition-colors font-medium">
+              🔗 Hubungkan ke Cloud
+            </button>
+            <button onclick="closeCloudModal()" class="flex-1 bg-gray-300 text-gray-700 py-3 px-4 rounded-lg hover:bg-gray-400 transition-colors font-medium">
+              ❌ Batal
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Backup Import Modal -->
+  <div id="backupModal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden">
+    <div class="flex items-center justify-center min-h-screen p-4">
+      <div class="bg-white rounded-2xl p-6 w-full max-w-md fade-in">
+        <div class="flex justify-between items-center mb-6">
+          <h3 class="text-xl font-semibold text-gray-800">📥 Restore Data</h3>
+          <button onclick="closeBackupModal()" class="text-gray-500 hover:text-gray-700 transition-colors">
+            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="space-y-4">
+          <div>
+            <label for="backupFile" class="block text-sm font-medium text-gray-700 mb-2">
+              <span class="flex items-center">
+                <span class="mr-2">📁</span>
+                Pilih File Backup
+              </span>
+            </label>
+            <input type="file" id="backupFile" accept=".json" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all">
+            <p class="text-xs text-gray-500 mt-1">File backup harus berformat .json</p>
+          </div>
+          <div class="bg-yellow-50 p-4 rounded-lg">
+            <h4 class="font-semibold text-yellow-800 mb-2">⚠️ Peringatan:</h4>
+            <p class="text-sm text-yellow-700">Restore data akan mengganti semua data yang ada saat ini. Pastikan Anda sudah membuat backup terlebih dahulu.</p>
+          </div>
+          <div class="flex gap-3 pt-4">
+            <button onclick="restoreFromBackup()" class="flex-1 bg-yellow-600 text-white py-3 px-4 rounded-lg hover:bg-yellow-700 transition-colors font-medium">
+              📥 Restore Data
+            </button>
+            <button onclick="closeBackupModal()" class="flex-1 bg-gray-300 text-gray-700 py-3 px-4 rounded-lg hover:bg-gray-400 transition-colors font-medium">
+              ❌ Batal
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <script>
     // Data Storage
     let kelasData = JSON.parse(localStorage.getItem('kelasData')) || [];
@@ -698,12 +836,21 @@
     let absensiData = JSON.parse(localStorage.getItem('absensiData')) || [];
     let currentPage = localStorage.getItem('currentPage') || 'dashboard';
 
+    // Cloud Storage Variables
+    let isCloudConnected = false;
+    let currentSchoolId = localStorage.getItem('schoolId') || '';
+    let cloudSyncInterval = null;
+    let lastSyncTime = localStorage.getItem('lastSyncTime') || null;
+
     // Initialize
     document.addEventListener('DOMContentLoaded', function() {
       try {
         updateCurrentDate();
         loadKelasOptions();
         updateDashboardStats();
+
+        // Initialize cloud connection
+        initializeCloudConnection();
 
         // Set today's date for absensi
         const tanggalAbsensi = document.getElementById('tanggalAbsensi');
@@ -742,6 +889,20 @@
       document.getElementById('filterBulan').addEventListener('change', applyFilter);
       document.getElementById('filterNama').addEventListener('input', applyFilter);
 
+      // Close sidebar when clicking outside on mobile
+      document.addEventListener('click', function(e) {
+        const sidebar = document.getElementById('sidebar');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+
+        // Check if click is outside sidebar and not on toggle button
+        if (!sidebar.contains(e.target) && !sidebarToggle.contains(e.target)) {
+          // Only close if sidebar is open and we're on mobile
+          if (window.innerWidth < 1024 && !sidebar.classList.contains('-translate-x-full')) {
+            sidebar.classList.add('-translate-x-full');
+          }
+        }
+      });
+
       // Modal close on outside click
       document.getElementById('kelasModal').addEventListener('click', function(e) {
         if (e.target === this) {
@@ -773,6 +934,18 @@
         }
       });
 
+      document.getElementById('cloudModal').addEventListener('click', function(e) {
+        if (e.target === this) {
+          closeCloudModal();
+        }
+      });
+
+      document.getElementById('backupModal').addEventListener('click', function(e) {
+        if (e.target === this) {
+          closeBackupModal();
+        }
+      });
+
       // Modal close on ESC key
       document.addEventListener('keydown', function(e) {
         if (e.key === 'Escape') {
@@ -782,6 +955,8 @@
           closeEditSiswaModal();
           closeDetailModal();
           closeConfirmModal();
+          closeCloudModal();
+          closeBackupModal();
         }
       });
     });
@@ -1900,11 +2075,330 @@
       return [hadir, izin, sakit, alfa];
     }
 
+    // Cloud Storage Functions
+    async function initializeCloudConnection() {
+      if (currentSchoolId) {
+        try {
+          await connectToCloudWithId(currentSchoolId);
+        } catch (error) {
+          console.log('Auto-connect failed:', error);
+          updateCloudStatus('offline', 'Offline');
+        }
+      } else {
+        updateCloudStatus('offline', 'Offline');
+      }
+    }
+
+    async function connectToCloudWithId(schoolId) {
+      if (!window.firebaseDB) {
+        throw new Error('Firebase not initialized');
+      }
+
+      updateCloudStatus('connecting', 'Menghubungkan...');
+
+      try {
+        // Try to load data from cloud
+        const docRef = window.firebaseDoc(window.firebaseDB, 'schools', schoolId);
+        const docSnap = await window.firebaseGetDoc(docRef);
+
+        if (docSnap.exists()) {
+          // Data exists in cloud, load it
+          const cloudData = docSnap.data();
+          kelasData = cloudData.kelasData || [];
+          siswaData = cloudData.siswaData || [];
+          absensiData = cloudData.absensiData || [];
+
+          // Save to local storage
+          saveDataLocal();
+
+          // Refresh UI
+          refreshAllData();
+
+          showNotification('Data berhasil dimuat dari cloud!');
+        } else {
+          // No data in cloud, upload current local data
+          await saveToCloud();
+          showNotification('Data lokal berhasil diunggah ke cloud!');
+        }
+
+        // Set up real-time listener
+        setupCloudListener(schoolId);
+
+        isCloudConnected = true;
+        currentSchoolId = schoolId;
+        localStorage.setItem('schoolId', schoolId);
+        updateCloudStatus('connected', 'Terhubung');
+
+        // Start auto-sync
+        startAutoSync();
+
+      } catch (error) {
+        console.error('Cloud connection error:', error);
+        updateCloudStatus('error', 'Error');
+        throw error;
+      }
+    }
+
+    function setupCloudListener(schoolId) {
+      if (!window.firebaseDB || !window.firebaseOnSnapshot) return;
+
+      const docRef = window.firebaseDoc(window.firebaseDB, 'schools', schoolId);
+      window.firebaseOnSnapshot(docRef, (doc) => {
+        if (doc.exists()) {
+          const cloudData = doc.data();
+          const cloudTimestamp = cloudData.lastModified;
+          const localTimestamp = localStorage.getItem('lastModified');
+
+          // Only update if cloud data is newer
+          if (!localTimestamp || cloudTimestamp > localTimestamp) {
+            kelasData = cloudData.kelasData || [];
+            siswaData = cloudData.siswaData || [];
+            absensiData = cloudData.absensiData || [];
+
+            saveDataLocal();
+            refreshAllData();
+
+            localStorage.setItem('lastModified', cloudTimestamp);
+            updateLastSyncTime();
+          }
+        }
+      });
+    }
+
+    async function saveToCloud() {
+      if (!isCloudConnected || !currentSchoolId || !window.firebaseDB) return;
+
+      try {
+        const timestamp = new Date().toISOString();
+        const docRef = window.firebaseDoc(window.firebaseDB, 'schools', currentSchoolId);
+
+        await window.firebaseSetDoc(docRef, {
+          kelasData: kelasData,
+          siswaData: siswaData,
+          absensiData: absensiData,
+          lastModified: timestamp,
+          schoolId: currentSchoolId
+        });
+
+        localStorage.setItem('lastModified', timestamp);
+        updateLastSyncTime();
+
+      } catch (error) {
+        console.error('Save to cloud error:', error);
+        updateCloudStatus('error', 'Error Sync');
+      }
+    }
+
+    function startAutoSync() {
+      if (cloudSyncInterval) {
+        clearInterval(cloudSyncInterval);
+      }
+
+      // Auto-sync every 30 seconds
+      cloudSyncInterval = setInterval(async () => {
+        if (isCloudConnected) {
+          await saveToCloud();
+        }
+      }, 30000);
+    }
+
+    function updateCloudStatus(status, text) {
+      const cloudIcon = document.getElementById('cloudIcon');
+      const cloudText = document.getElementById('cloudText');
+      const cloudStatus = document.getElementById('cloudStatus');
+
+      cloudStatus.className = 'flex items-center gap-1 px-2 py-1 rounded-full text-xs';
+
+      switch (status) {
+        case 'connected':
+          cloudIcon.textContent = '☁️';
+          cloudText.textContent = text;
+          cloudStatus.classList.add('bg-green-100', 'text-green-700');
+          break;
+        case 'connecting':
+          cloudIcon.textContent = '🔄';
+          cloudText.textContent = text;
+          cloudStatus.classList.add('bg-yellow-100', 'text-yellow-700');
+          break;
+        case 'error':
+          cloudIcon.textContent = '⚠️';
+          cloudText.textContent = text;
+          cloudStatus.classList.add('bg-red-100', 'text-red-700');
+          break;
+        default:
+          cloudIcon.textContent = '☁️';
+          cloudText.textContent = text;
+          cloudStatus.classList.add('bg-gray-100', 'text-gray-600');
+      }
+    }
+
+    function updateLastSyncTime() {
+      const now = new Date().toISOString();
+      localStorage.setItem('lastSyncTime', now);
+      lastSyncTime = now;
+    }
+
+    function refreshAllData() {
+      updateDashboardStats();
+      loadKelasTable();
+      loadKelasOptions();
+
+      // Refresh current page
+      const kelasSelect = document.getElementById('kelasSelect');
+      if (kelasSelect && kelasSelect.value) {
+        loadSiswaTable(kelasSelect.value);
+      }
+
+      const absensiKelasSelect = document.getElementById('absensiKelasSelect');
+      if (absensiKelasSelect && absensiKelasSelect.value) {
+        loadAbsensiTable(absensiKelasSelect.value);
+      }
+
+      loadRekapTable();
+      updateKelasStatsChart();
+      updateCharts();
+    }
+
+    // Cloud Modal Functions
+    function openCloudModal() {
+      document.getElementById('schoolId').value = currentSchoolId;
+      document.getElementById('cloudModal').classList.remove('hidden');
+    }
+
+    function closeCloudModal() {
+      document.getElementById('cloudModal').classList.add('hidden');
+    }
+
+    async function connectToCloud() {
+      const schoolId = document.getElementById('schoolId').value.trim();
+
+      if (!schoolId) {
+        showNotification('Masukkan ID sekolah terlebih dahulu!', 'error');
+        return;
+      }
+
+      // Validate school ID format
+      if (!/^[a-zA-Z0-9-_]+$/.test(schoolId)) {
+        showNotification('ID sekolah hanya boleh mengandung huruf, angka, tanda hubung, dan underscore!', 'error');
+        return;
+      }
+
+      try {
+        await connectToCloudWithId(schoolId);
+        closeCloudModal();
+      } catch (error) {
+        showNotification('Gagal terhubung ke cloud. Periksa koneksi internet Anda.', 'error');
+      }
+    }
+
+    // Sync Functions
+    async function syncData() {
+      if (!isCloudConnected) {
+        openCloudModal();
+        return;
+      }
+
+      updateCloudStatus('connecting', 'Sinkronisasi...');
+
+      try {
+        await saveToCloud();
+        showNotification('Data berhasil disinkronisasi!');
+        updateCloudStatus('connected', 'Terhubung');
+      } catch (error) {
+        showNotification('Gagal sinkronisasi data!', 'error');
+        updateCloudStatus('error', 'Error Sync');
+      }
+    }
+
+    // Backup Functions
+    function exportBackup() {
+      const backupData = {
+        kelasData: kelasData,
+        siswaData: siswaData,
+        absensiData: absensiData,
+        exportDate: new Date().toISOString(),
+        schoolId: currentSchoolId || 'unknown'
+      };
+
+      const dataStr = JSON.stringify(backupData, null, 2);
+      const blob = new Blob([dataStr], {
+        type: 'application/json'
+      });
+      const url = URL.createObjectURL(blob);
+
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `backup_absensi_${new Date().toISOString().split('T')[0]}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      URL.revokeObjectURL(url);
+      showNotification('Backup berhasil diunduh!');
+    }
+
+    function importBackup() {
+      document.getElementById('backupModal').classList.remove('hidden');
+    }
+
+    function closeBackupModal() {
+      document.getElementById('backupModal').classList.add('hidden');
+    }
+
+    function restoreFromBackup() {
+      const fileInput = document.getElementById('backupFile');
+      const file = fileInput.files[0];
+
+      if (!file) {
+        showNotification('Pilih file backup terlebih dahulu!', 'error');
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const backupData = JSON.parse(e.target.result);
+
+          // Validate backup data structure
+          if (!backupData.kelasData || !backupData.siswaData || !backupData.absensiData) {
+            throw new Error('Format backup tidak valid');
+          }
+
+          // Restore data
+          kelasData = backupData.kelasData;
+          siswaData = backupData.siswaData;
+          absensiData = backupData.absensiData;
+
+          // Save to local and cloud
+          saveData();
+
+          // Refresh UI
+          refreshAllData();
+
+          closeBackupModal();
+          showNotification('Data berhasil dipulihkan dari backup!');
+
+        } catch (error) {
+          showNotification('File backup tidak valid atau rusak!', 'error');
+        }
+      };
+      reader.readAsText(file);
+    }
+
     // Utility Functions
-    function saveData() {
+    function saveDataLocal() {
       localStorage.setItem('kelasData', JSON.stringify(kelasData));
       localStorage.setItem('siswaData', JSON.stringify(siswaData));
       localStorage.setItem('absensiData', JSON.stringify(absensiData));
+    }
+
+    function saveData() {
+      saveDataLocal();
+
+      // Also save to cloud if connected
+      if (isCloudConnected) {
+        saveToCloud();
+      }
     }
 
     function showNotification(message, type = 'success') {
@@ -2065,7 +2559,7 @@
         var b = a.contentDocument || a.contentWindow.document;
         if (b) {
           var d = b.createElement('script');
-          d.innerHTML = "window.__CF$cv$params={r:'9915e93ae7f2410c',t:'MTc2MDkzNjAwMi4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";
+          d.innerHTML = "window.__CF$cv$params={r:'9915f6ee3201fe11',t:'MTc2MDkzNjU2My4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";
           b.getElementsByTagName('head')[0].appendChild(d)
         }
       }
